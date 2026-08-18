@@ -68,6 +68,8 @@ export class VoiceManager {
   private deafened = false;
   /** Portão do push-to-talk: em modo `open` fica sempre aberto. */
   private transmitting = true;
+  /** Agrupa as atualizações do mapa de donos num envio só. */
+  private streamMapTimer: number | null = null;
   private stopped = false;
 
   constructor(
@@ -234,6 +236,8 @@ export class VoiceManager {
 
   stop(): void {
     this.stopped = true;
+    if (this.streamMapTimer !== null) window.clearTimeout(this.streamMapTimer);
+    this.streamMapTimer = null;
     if (this.timer !== null) window.clearInterval(this.timer);
     this.timer = null;
 
@@ -368,16 +372,31 @@ export class VoiceManager {
     }
   }
 
-  /** Só o host chama: conta a cada convidado de quem é cada stream repassada. */
+  /**
+   * Só o host chama: conta a cada convidado de quem é cada stream repassada.
+   *
+   * Agrupado de propósito. Quando alguém entra ou começa a compartilhar, o
+   * mapa muda várias vezes em poucos milissegundos, e mandar a cada mudança
+   * custa (participantes × mudanças) mensagens — com 6 pessoas isso vira uma
+   * enxurrada de IPC bem no pior momento, que é justamente quando a
+   * renegociação do WebRTC está acontecendo.
+   */
   private broadcastStreamMap(): void {
-    if (!this.options.isHost) return;
-    const streams: StreamOwner[] = [...this.streamOwner].map(([streamId, ownerId]) => ({
-      streamId,
-      ownerId,
-    }));
-    for (const peerId of this.links.keys()) {
-      void window.only.sendSignal({ targetId: peerId, channel: 'voice', streams });
-    }
+    if (!this.options.isHost || this.stopped) return;
+    if (this.streamMapTimer !== null) return;
+
+    this.streamMapTimer = window.setTimeout(() => {
+      this.streamMapTimer = null;
+      if (this.stopped) return;
+
+      const streams: StreamOwner[] = [...this.streamOwner].map(([streamId, ownerId]) => ({
+        streamId,
+        ownerId,
+      }));
+      for (const peerId of this.links.keys()) {
+        void window.only.sendSignal({ targetId: peerId, channel: 'voice', streams });
+      }
+    }, 120);
   }
 
   // -------------------------------------------------------------------------

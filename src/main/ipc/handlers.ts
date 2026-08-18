@@ -55,7 +55,13 @@ let session: Session | null = null;
 
 function broadcastToRenderer(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    // A janela pode ser destruída entre a checagem e o envio; e um payload que
+    // o Electron não consiga serializar lançaria daqui de dentro.
+    try {
+      if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    } catch (error) {
+      console.error('[only] falha ao avisar a interface:', error);
+    }
   }
 }
 

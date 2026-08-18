@@ -54,13 +54,43 @@ export class ScreenShareManager {
   private localStream: MediaStream | null = null;
   /** Modo escolhido para a transmissão local (fluidez ou nitidez). */
   private preset = SHARE_PRESETS[DEFAULT_PRESET];
+  /** Agrupa as atualizações do mapa de donos num envio só. */
+  private streamMapTimer: number | null = null;
 
-  /** Preset escolhido, com o teto de banda das configurações aplicado por cima. */
+  /**
+   * Preset escolhido, com o teto das configurações e uma redução conforme o
+   * tamanho da sala.
+   *
+   * O host manda a mesma tela para cada destinatário separadamente, então o
+   * upload dele é (bitrate × pessoas). Com 6 pessoas a 6 Mbps seriam 36 Mbps,
+   * acima do que a maioria das conexões domésticas sustenta — e o resultado
+   * não é "um pouco pior para todos", é travamento para todos. Reduzir pela
+   * raiz do número de destinatários degrada de forma suave em vez de estourar.
+   */
   private get senderQuality() {
+    const recipients = Math.max(1, this.links.size);
+    const scale = recipients <= 1 ? 1 : Math.max(0.35, 1 / Math.sqrt(recipients));
+    const ceiling = Math.min(this.preset.sender.maxBitrate, runtime.screenBitrate);
+
     return {
       ...this.preset.sender,
-      maxBitrate: Math.min(this.preset.sender.maxBitrate, runtime.screenBitrate),
+      maxBitrate: Math.round(ceiling * scale),
     };
+  }
+
+  /** Reaplica a qualidade quando a sala muda de tamanho. */
+  private retuneSenders(): void {
+    const quality = this.senderQuality;
+    for (const [peerId, sender] of this.localSenders) {
+      void this.links.get(peerId)?.tuneSender(sender, quality);
+    }
+    for (const [peerId, senders] of this.forwarded) {
+      const link = this.links.get(peerId);
+      if (!link) continue;
+      for (const sender of senders.values()) {
+        void link.tuneSender(sender, forwardQuality(quality));
+      }
+    }
   }
   private stopped = false;
 
@@ -72,6 +102,7 @@ export class ScreenShareManager {
 
   syncPeers(peerIds: string[]): void {
     if (this.stopped) return;
+    const previousSize = this.links.size;
     const wanted = new Set(
       this.options.isHost
         ? peerIds.filter((id) => id !== this.options.selfId)
@@ -86,6 +117,9 @@ export class ScreenShareManager {
     for (const peerId of [...this.links.keys()]) {
       if (!wanted.has(peerId)) this.closeLink(peerId);
     }
+
+    // A sala mudou de tamanho: o quanto cada tela pode gastar muda junto.
+    if (this.links.size !== previousSize) this.retuneSenders();
   }
 
   handleSignal(signal: IncomingSignal): void {
@@ -177,6 +211,8 @@ export class ScreenShareManager {
 
   dispose(): void {
     this.stopped = true;
+    if (this.streamMapTimer !== null) window.clearTimeout(this.streamMapTimer);
+    this.streamMapTimer = null;
     this.stopSharing();
     for (const link of this.links.values()) link.close();
     this.links.clear();
@@ -300,16 +336,30 @@ export class ScreenShareManager {
     }
   }
 
-  /** Só o host chama: conta a cada convidado de quem é cada tela repassada. */
+  /**
+   * Só o host chama: conta a cada convidado de quem é cada tela repassada.
+   *
+   * Agrupado de propósito. Quando alguém entra ou começa a compartilhar, o
+   * mapa muda várias vezes em poucos milissegundos, e mandar a cada mudança
+   * custa (participantes × mudanças) mensagens — bem no momento em que a
+   * renegociação do WebRTC já está consumindo tudo.
+   */
   private broadcastStreamMap(): void {
-    if (!this.options.isHost) return;
-    const streams: StreamOwner[] = [...this.streamOwner].map(([streamId, ownerId]) => ({
-      streamId,
-      ownerId,
-    }));
-    for (const peerId of this.links.keys()) {
-      void window.only.sendSignal({ targetId: peerId, channel: 'screen', streams });
-    }
+    if (!this.options.isHost || this.stopped) return;
+    if (this.streamMapTimer !== null) return;
+
+    this.streamMapTimer = window.setTimeout(() => {
+      this.streamMapTimer = null;
+      if (this.stopped) return;
+
+      const streams: StreamOwner[] = [...this.streamOwner].map(([streamId, ownerId]) => ({
+        streamId,
+        ownerId,
+      }));
+      for (const peerId of this.links.keys()) {
+        void window.only.sendSignal({ targetId: peerId, channel: 'screen', streams });
+      }
+    }, 120);
   }
 
   private emitScreens(): void {

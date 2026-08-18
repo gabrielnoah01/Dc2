@@ -183,18 +183,34 @@ export class HostServer {
     socket.on('message', (raw) => {
       const message = parseMessage<ClientMessage>(raw.toString());
       if (!message) return;
-      this.handleMessage(connection, message, remoteAddress);
+
+      // Uma mensagem problemática de um convidado não pode derrubar a sala de
+      // todo mundo. Sem esta barreira, qualquer exceção aqui sobe pelo emitter
+      // do socket e mata o processo principal inteiro.
+      try {
+        this.handleMessage(connection, message, remoteAddress);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        log(`erro ao tratar "${message.type}" de ${connection.username || remoteAddress}: ${detail}`);
+        this.events.onError(
+          `um problema com a mensagem de ${connection.username || 'alguém'} foi ignorado`,
+        );
+      }
     });
 
     socket.on('close', (code, reasonBuffer) => {
-      clearTimeout(joinTimer);
-      log(`${connection.username || remoteAddress} desconectou (código ${code} ${reasonBuffer.toString() || 'sem motivo'})`);
-      this.connections.delete(id);
-      if (this.screenSharers.delete(id)) {
-        this.broadcast({ type: 'screenshare:stopped', fromId: id });
-        this.events.onScreenShare([...this.screenSharers]);
+      try {
+        clearTimeout(joinTimer);
+        log(`${connection.username || remoteAddress} desconectou (código ${code} ${reasonBuffer.toString() || 'sem motivo'})`);
+        this.connections.delete(id);
+        if (this.screenSharers.delete(id)) {
+          this.broadcast({ type: 'screenshare:stopped', fromId: id });
+          this.events.onScreenShare([...this.screenSharers]);
+        }
+        if (connection.joined) this.emitParticipants();
+      } catch (error) {
+        log(`erro ao desconectar ${remoteAddress}: ${String(error)}`);
       }
-      if (connection.joined) this.emitParticipants();
     });
 
     socket.on('error', (error) => {
@@ -393,8 +409,13 @@ export class HostServer {
     const data = serialize(message);
     for (const connection of this.connections.values()) {
       if (!connection.joined || connection.id === exceptId) continue;
-      if (connection.socket.readyState === WebSocket.OPEN) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      // Um socket que morreu entre a checagem e o envio não pode interromper
+      // a entrega para os demais.
+      try {
         connection.socket.send(data);
+      } catch (error) {
+        log(`falha ao enviar para ${connection.username}: ${String(error)}`);
       }
     }
   }
@@ -402,7 +423,11 @@ export class HostServer {
   private sendTo(id: string, message: ServerMessage): void {
     const connection = this.connections.get(id);
     if (!connection || connection.socket.readyState !== WebSocket.OPEN) return;
-    connection.socket.send(serialize(message));
+    try {
+      connection.socket.send(serialize(message));
+    } catch (error) {
+      log(`falha ao enviar para ${connection.username}: ${String(error)}`);
+    }
   }
 
   private isRateLimited(address: string): boolean {

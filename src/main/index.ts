@@ -11,6 +11,32 @@ import { createTray, destroyTray } from './tray';
 // mesma máquina), então em desenvolvimento não bloqueamos instâncias extras.
 const isDev = process.env.NODE_ENV === 'development';
 
+/**
+ * Rede de segurança do processo principal.
+ *
+ * Num app comum, morrer numa exceção é aceitável. Aqui não: este processo é o
+ * servidor de todo mundo que está na sala. Derrubar a conversa inteira por
+ * causa de um erro isolado é sempre pior do que seguir em frente mancando.
+ */
+process.on('uncaughtException', (error) => {
+  console.error('[only] exceção não tratada:', error);
+  notifyRenderer(`erro interno contornado: ${error.message}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[only] promessa rejeitada sem tratamento:', reason);
+});
+
+function notifyRenderer(detail: string): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    try {
+      if (!window.isDestroyed()) window.webContents.send('event:error', detail);
+    } catch {
+      // Janela morrendo no meio do envio: nada a fazer.
+    }
+  }
+}
+
 app.whenReady().then(() => {
   const settings = loadSettings();
   applySystemSettings(settings);
