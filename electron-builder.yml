@@ -19,8 +19,8 @@ win:
 # Troque owner/repo pelo seu repositório antes do primeiro `npm run release`.
 publish:
   provider: github
-  owner: SEU-USUARIO
-  repo: only
+  owner: gabrielnoah01
+  repo: Dc2
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

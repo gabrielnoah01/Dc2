@@ -97,7 +97,7 @@ export function ServerScreen() {
             messages={messages}
             selfId={selfId}
             compact={sharing}
-            onSend={(text) => void window.only.sendChat(text)}
+            onSend={(payload) => void window.only.sendChat(payload)}
           />
         </main>
       </div>

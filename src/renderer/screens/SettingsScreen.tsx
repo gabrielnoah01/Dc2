@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { useSettings } from '../state/settings';
 import { Row, Section, Select, ShortcutInput, Slider, Toggle } from '../components/controls';
 import { APP_NAME, MAX_USERNAME_LENGTH } from '@shared/constants';
+import type { ConversationSummary } from '@shared/ipc';
+import type { RetentionDays } from '@shared/settings';
 
-type Tab = 'audio' | 'shortcuts' | 'screen' | 'people' | 'network' | 'app';
+type Tab = 'audio' | 'chat' | 'shortcuts' | 'screen' | 'people' | 'network' | 'app';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'audio', label: 'Voz e áudio' },
+  { id: 'chat', label: 'Chat e histórico' },
   { id: 'shortcuts', label: 'Atalhos' },
   { id: 'screen', label: 'Tela' },
   { id: 'people', label: 'Pessoas' },
@@ -69,6 +72,7 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
         <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-6">
             {tab === 'audio' && <AudioTab />}
+            {tab === 'chat' && <ChatTab />}
             {tab === 'shortcuts' && <ShortcutsTab />}
             {tab === 'screen' && <ScreenTab />}
             {tab === 'people' && <PeopleTab />}
@@ -211,6 +215,118 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
               onChange={(autoGainControl) => void save({ audio: { autoGainControl } })}
             />
           </Row>
+        </Section>
+      </>
+    );
+  }
+
+  function ChatTab() {
+    const { chat } = settings;
+    const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+
+    const refresh = () =>
+      void window.only.listConversations().then(setConversations).catch(() => undefined);
+    useEffect(refresh, []);
+
+    return (
+      <>
+        <Section
+          title="Histórico"
+          hint="Só quem abre o servidor guarda a conversa — os outros recebem as mensagens recentes ao entrar."
+        >
+          <Row
+            label="Salvar a conversa"
+            hint="Desligado, a sala funciona igual: só não fica registro novo em disco"
+          >
+            <Toggle
+              value={chat.saveHistory}
+              onChange={(saveHistory) => void save({ chat: { saveHistory } })}
+            />
+          </Row>
+          <Row label="Apagar mensagens automaticamente" hint="Contado a partir da data de cada mensagem">
+            <Select
+              value={String(chat.retentionDays)}
+              onChange={(value) =>
+                void save({ chat: { retentionDays: Number(value) as RetentionDays } })
+              }
+              options={[
+                { value: '1', label: 'Depois de 1 dia' },
+                { value: '7', label: 'Depois de 7 dias' },
+                { value: '30', label: 'Depois de 30 dias' },
+                { value: '-1', label: 'Nunca apagar' },
+              ]}
+            />
+          </Row>
+          <Row label="Mensagens enviadas a quem entra">
+            <Slider
+              value={chat.historyOnJoin}
+              min={0}
+              max={500}
+              step={25}
+              onChange={(historyOnJoin) => void save({ chat: { historyOnJoin } })}
+            />
+          </Row>
+        </Section>
+
+        <Section title="Imagens">
+          <Row label="Tamanho máximo por imagem" hint="Acima disso a compressão aperta mais">
+            <Slider
+              value={chat.maxImageMb}
+              min={1}
+              max={8}
+              suffix=" MB"
+              onChange={(maxImageMb) => void save({ chat: { maxImageMb } })}
+            />
+          </Row>
+          <Row label="Qualidade da compressão">
+            <Slider
+              value={chat.imageQuality}
+              min={30}
+              max={100}
+              onChange={(imageQuality) => void save({ chat: { imageQuality } })}
+            />
+          </Row>
+        </Section>
+
+        <Section title="Conversas salvas" hint="Guardadas no seu PC, em %APPDATA%\Only\conversations.">
+          {conversations.length === 0 && (
+            <p className="text-sm text-slate-500">Nenhuma conversa salva ainda.</p>
+          )}
+          {conversations.map((conversation) => (
+            <div
+              key={conversation.id}
+              className="flex items-center gap-3 rounded-md bg-ink-800 p-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-slate-200">{conversation.name}</p>
+                <p className="text-xs text-slate-500">
+                  {conversation.messageCount} mensagens
+                  {conversation.attachmentBytes > 0 &&
+                    ` · ${(conversation.attachmentBytes / (1024 * 1024)).toFixed(1)} MB em imagens`}
+                </p>
+              </div>
+              <button
+                className="text-xs text-slate-500 hover:text-amber-300"
+                onClick={() => {
+                  if (confirm(`Apagar as mensagens de "${conversation.name}"?`)) {
+                    void window.only.clearConversation(conversation.id).then(refresh);
+                  }
+                }}
+              >
+                limpar
+              </button>
+              <button
+                className="text-xs text-slate-500 hover:text-red-300"
+                onClick={() => {
+                  if (confirm(`Excluir a conversa "${conversation.name}" de vez?`)) {
+                    void window.only.deleteConversation(conversation.id).then(refresh);
+                  }
+                }}
+              >
+                excluir
+              </button>
+            </div>
+          ))}
         </Section>
       </>
     );

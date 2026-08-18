@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+*.log
+
+
+# Preferências e conversas ficam em %APPDATA%, mas caso alguém aponte para cá:
+settings.json
+conversations/

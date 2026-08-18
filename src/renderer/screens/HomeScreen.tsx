@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSession } from '../state/store';
 import { APP_NAME, DEFAULT_PORT, MAX_USERNAME_LENGTH } from '@shared/constants';
 import { useSettings } from '../state/settings';
+import type { ConversationSummary } from '@shared/ipc';
 
 export function HomeScreen() {
   const startHost = useSession((s) => s.startHost);
@@ -19,6 +20,12 @@ export function HomeScreen() {
   const [port, setPort] = useState(String(settings.network.defaultPort || DEFAULT_PORT));
   const [guestName, setGuestName] = useState(settings.app.username);
   const [invite, setInvite] = useState('');
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState('');
+
+  useEffect(() => {
+    void window.only.listConversations().then(setConversations).catch(() => undefined);
+  }, []);
 
   // As preferências chegam do main um instante depois da primeira renderização.
   useEffect(() => {
@@ -37,6 +44,7 @@ export function HomeScreen() {
     const result = await window.only.createServer({
       username: hostName.trim(),
       port: Number(port) || DEFAULT_PORT,
+      ...(conversationId ? { conversationId } : {}),
     });
     setBusy(false);
     if (!result.ok) {
@@ -117,6 +125,23 @@ export function HomeScreen() {
             inputMode="numeric"
             onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
           />
+          {conversations.length > 0 && (
+            <>
+              <label className="text-xs uppercase tracking-wide text-slate-500">Conversa</label>
+              <select
+                className="field"
+                value={conversationId}
+                onChange={(e) => setConversationId(e.target.value)}
+              >
+                <option value="">Nova conversa</option>
+                {conversations.map((conversation) => (
+                  <option key={conversation.id} value={conversation.id}>
+                    {conversation.name} — {conversation.messageCount} msg
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <button className="btn-primary mt-2" disabled={!canCreate} onClick={createServer}>
             {busy ? 'Abrindo…' : 'Criar servidor'}
           </button>

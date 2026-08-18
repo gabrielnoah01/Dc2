@@ -13,6 +13,8 @@ export function App() {
   const role = useSession((s) => s.role);
   const setParticipants = useSession((s) => s.setParticipants);
   const addMessage = useSession((s) => s.addMessage);
+  const setHistory = useSession((s) => s.setHistory);
+  const setAttachmentData = useSession((s) => s.setAttachmentData);
   const setScreenSharers = useSession((s) => s.setScreenSharers);
   const endSession = useSession((s) => s.endSession);
   const setError = useSession((s) => s.setError);
@@ -51,6 +53,10 @@ export function App() {
       window.only.onUpdate(setUpdate),
       window.only.onConnection(applyConnectionUpdate),
       window.only.onSettings(receiveSettings),
+      window.only.onHistory(setHistory),
+      window.only.onAttachment(({ messageId, dataUrl }) =>
+        setAttachmentData(messageId, dataUrl),
+      ),
     ];
     return () => unsubscribers.forEach((off) => off());
   }, [
@@ -61,6 +67,8 @@ export function App() {
     setError,
     applyConnectionUpdate,
     receiveSettings,
+    setHistory,
+    setAttachmentData,
   ]);
 
   return (

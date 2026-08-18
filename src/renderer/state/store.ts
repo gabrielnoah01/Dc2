@@ -33,6 +33,10 @@ interface SessionState {
   endSession(reason?: string): void;
   setParticipants(participants: Participant[]): void;
   addMessage(message: ChatMessage): void;
+  /** Substitui o histórico (chega logo depois de entrar na sala). */
+  setHistory(messages: ChatMessage[]): void;
+  /** Preenche a imagem de uma mensagem que veio só com o descritor. */
+  setAttachmentData(messageId: string, dataUrl: string | null): void;
   setScreenSharers(sharerIds: string[]): void;
   /** Dados de rede que chegaram depois da sala abrir. */
   applyConnectionUpdate(update: ConnectionUpdate): void;
@@ -82,6 +86,24 @@ export const useSession = create<SessionState>((set) => ({
 
   addMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message].slice(-500) })),
+
+  setHistory: (messages) =>
+    set((state) => {
+      // O histórico pode chegar depois de já ter conversa na tela; junta sem
+      // duplicar e mantém a ordem cronológica.
+      const known = new Set(state.messages.map((message) => message.id));
+      const merged = [...messages.filter((message) => !known.has(message.id)), ...state.messages];
+      return { messages: merged.sort((a, b) => a.ts - b.ts).slice(-500) };
+    }),
+
+  setAttachmentData: (messageId, dataUrl) =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === messageId && message.attachment
+          ? { ...message, attachment: { ...message.attachment, dataUrl: dataUrl ?? undefined } }
+          : message,
+      ),
+    })),
 
   setScreenSharers: (screenSharerIds) => set({ screenSharerIds }),
 

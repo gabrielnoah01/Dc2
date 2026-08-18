@@ -5,7 +5,11 @@ import { loadSettings, resetSettings, updateSettings } from '../settings';
 import {
   appendMessage,
   attachmentDataUrl,
+  clearMessages,
   closeConversation,
+  currentConversationId,
+  deleteConversation,
+  listConversations,
   openConversation,
   pruneMessages,
   recentMessages,
@@ -70,6 +74,13 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC.checkUpdate, () => checkForUpdates());
   ipcMain.handle(IPC.installUpdate, () => installUpdate());
+
+  ipcMain.handle(IPC.requestAttachment, (_event, messageId: string) =>
+    requestAttachment(messageId),
+  );
+  ipcMain.handle(IPC.listConversations, () => listConversations());
+  ipcMain.handle(IPC.deleteConversation, (_event, id: string) => deleteConversation(id));
+  ipcMain.handle(IPC.clearConversation, (_event, id: string) => clearMessages(id));
 
   ipcMain.handle(IPC.getSettings, () => loadSettings());
   ipcMain.handle(IPC.updateSettings, (_event, patch: SettingsPatch) => {
@@ -153,6 +164,12 @@ async function createServer(
   }
 
   session = { role: 'host', host };
+
+  // O host também vê a conversa que escolheu continuar.
+  const history = recentMessages(chat.historyOnJoin);
+  if (history.length > 0) {
+    setTimeout(() => broadcastToRenderer(IPC_EVENT.history, history), 0);
+  }
 
   const localIp = resolveLocalIp() ?? '127.0.0.1';
 
@@ -240,6 +257,15 @@ async function joinServer(
         case 'chat:broadcast':
           broadcastToRenderer(IPC_EVENT.chat, message.message);
           break;
+        case 'chat:history':
+          broadcastToRenderer(IPC_EVENT.history, message.messages);
+          break;
+        case 'chat:attachment':
+          broadcastToRenderer(IPC_EVENT.attachment, {
+            messageId: message.messageId,
+            dataUrl: message.dataUrl,
+          });
+          break;
         case 'rtc:offer':
         case 'rtc:answer':
         case 'rtc:ice':
@@ -296,6 +322,22 @@ function sendChat(payload: ChatPayload): void {
   const { text, attachment } = normalizeChatPayload(payload);
   if (session.role === 'host') session.host?.sendChatFromHost(text, attachment);
   else session.guest?.send({ type: 'chat:send', text, attachment });
+}
+
+/**
+ * Imagem antiga sob demanda. O host lê do próprio disco; o convidado pede ao
+ * host e a resposta chega pelo evento.
+ */
+function requestAttachment(messageId: string): void {
+  if (!session) return;
+  if (session.role === 'host') {
+    broadcastToRenderer(IPC_EVENT.attachment, {
+      messageId,
+      dataUrl: attachmentDataUrl(messageId),
+    });
+    return;
+  }
+  session.guest?.send({ type: 'chat:attachment', messageId });
 }
 
 /** Aceita o formato antigo (string) para não quebrar nada que ainda o use. */
