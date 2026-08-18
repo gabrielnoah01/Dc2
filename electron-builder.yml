@@ -1,0 +1,31 @@
+appId: com.gabrielnoah.only
+productName: Only
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+# `ws` (única dependência de runtime) entra sozinho por estar em "dependencies".
+win:
+  icon: build/icon.ico
+  target:
+    # Instalador comum, com atalho e desinstalação pelo painel de controle.
+    - nsis
+    # .exe único que roda sem instalar — o jeito mais fácil de mandar pro amigo.
+    - portable
+# Onde o app procura atualização. O `electron-updater` baixa o `latest.yml`
+# publicado aqui e compara com a versão instalada.
+# Troque owner/repo pelo seu repositório antes do primeiro `npm run release`.
+publish:
+  provider: github
+  owner: SEU-USUARIO
+  repo: only
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Only
+  artifactName: ${productName}-${version}-setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

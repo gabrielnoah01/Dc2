@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ink-900 text-slate-200 antialiased;
+    font-family: theme('fontFamily.sans');
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-ink-500;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  input,
+  button {
+    @apply outline-none;
+  }
+}
+
+@layer components {
+  .field {
+    @apply w-full rounded-md bg-ink-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-ink-500
+      placeholder:text-slate-500 focus:ring-2 focus:ring-accent;
+  }
+
+  .btn {
+    @apply rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed
+      disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .btn-ghost {
+    @apply btn bg-ink-600 text-slate-200 hover:bg-ink-500;
+  }
+
+  .card {
+    @apply rounded-lg bg-ink-800 p-6 ring-1 ring-ink-600;
+  }
+}
