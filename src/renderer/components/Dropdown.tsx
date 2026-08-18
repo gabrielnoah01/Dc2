@@ -73,18 +73,26 @@ export function Dropdown<T extends string>({
       }
     };
 
-    // Rolar ou redimensionar deixaria a lista solta longe do botão.
-    const reposition = () => setOpen(false);
+    /**
+     * Rolar a página move o botão, então a lista precisa acompanhar. Mas rolar
+     * *dentro* da lista não pode mexer em nada — era o que fechava o dropdown
+     * assim que a pessoa tentava percorrer as opções.
+     */
+    const onScroll = (event: Event) => {
+      if (listRef.current?.contains(event.target as Node)) return;
+      setRect(buttonRef.current?.getBoundingClientRect() ?? null);
+    };
+    const onResize = () => setRect(buttonRef.current?.getBoundingClientRect() ?? null);
 
     window.addEventListener('mousedown', close);
     window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [open, options, highlight, onChange]);
 
@@ -139,6 +147,10 @@ export function Dropdown<T extends string>({
               return (
                 <button
                   key={option.value}
+                  ref={(node) => {
+                    // Rolar até a opção destacada quando se navega pelas setas.
+                    if (index === highlight) node?.scrollIntoView({ block: 'nearest' });
+                  }}
                   onMouseEnter={() => setHighlight(index)}
                   onClick={() => {
                     onChange(option.value);

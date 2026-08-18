@@ -11,6 +11,7 @@ import {
   deleteConversation,
   listConversations,
   openConversation,
+  pruneConversations,
   pruneMessages,
   recentMessages,
 } from '../chatStore';
@@ -141,6 +142,8 @@ async function createServer(
   // o histórico pronto para ser enviado.
   openConversation({ id: options.conversationId });
   pruneMessages(chat.retentionDays);
+  // A conversa recém-aberta já está protegida: a limpeza pula a que está em uso.
+  pruneConversations(chat.conversationRetentionDays);
   startRetentionTimer();
 
   const host = new HostServer(token, options.username, {
@@ -360,7 +363,9 @@ function startRetentionTimer(): void {
   retentionTimer = setInterval(
     () => {
       const { chat } = loadSettings();
-      if (chat.saveHistory) pruneMessages(chat.retentionDays);
+      if (!chat.saveHistory) return;
+      pruneMessages(chat.retentionDays);
+      pruneConversations(chat.conversationRetentionDays);
     },
     60 * 60 * 1000,
   );

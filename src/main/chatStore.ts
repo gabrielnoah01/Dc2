@@ -133,6 +133,28 @@ export function clearMessages(id: string): void {
   mkdirSync(join(dir, 'attachments'), { recursive: true });
 }
 
+/**
+ * Descarta conversas que ninguém abre há muito tempo. A conversa em uso nunca
+ * é candidata, mesmo que a data de atualização esteja velha.
+ *
+ * Devolve os nomes das que saíram, para poder registrar o que aconteceu.
+ */
+export function pruneConversations(retentionDays: RetentionDays): string[] {
+  if (retentionDays < 0) return [];
+
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const removed: string[] = [];
+
+  for (const conversation of listConversations()) {
+    if (conversation.id === current?.meta.id) continue;
+    if (conversation.updatedAt >= cutoff) continue;
+    deleteConversation(conversation.id);
+    removed.push(conversation.name);
+  }
+
+  return removed;
+}
+
 // ---------------------------------------------------------------------------
 // Mensagens
 // ---------------------------------------------------------------------------

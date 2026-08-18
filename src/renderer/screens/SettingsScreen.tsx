@@ -3,7 +3,7 @@ import { useSettings } from '../state/settings';
 import { Row, Section, Select, ShortcutInput, Slider, Toggle } from '../components/controls';
 import { APP_NAME, MAX_USERNAME_LENGTH } from '@shared/constants';
 import type { ConversationSummary } from '@shared/ipc';
-import type { RetentionDays } from '@shared/settings';
+import { RetentionPicker } from '../components/RetentionPicker';
 
 type Tab = 'audio' | 'chat' | 'shortcuts' | 'screen' | 'people' | 'network' | 'app';
 
@@ -243,18 +243,25 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
               onChange={(saveHistory) => void save({ chat: { saveHistory } })}
             />
           </Row>
-          <Row label="Apagar mensagens automaticamente" hint="Contado a partir da data de cada mensagem">
-            <Select
-              value={String(chat.retentionDays)}
-              onChange={(value) =>
-                void save({ chat: { retentionDays: Number(value) as RetentionDays } })
+          <Row
+            label="Apagar mensagens antigas"
+            hint="Contado a partir da data de cada mensagem"
+          >
+            <RetentionPicker
+              value={chat.retentionDays}
+              onChange={(retentionDays) => void save({ chat: { retentionDays } })}
+            />
+          </Row>
+          <Row
+            label="Apagar conversas paradas"
+            hint="A conversa inteira some, com imagens e tudo. A que estiver em uso nunca é apagada."
+          >
+            <RetentionPicker
+              value={chat.conversationRetentionDays}
+              neverLabel="Guardar para sempre"
+              onChange={(conversationRetentionDays) =>
+                void save({ chat: { conversationRetentionDays } })
               }
-              options={[
-                { value: '1', label: 'Depois de 1 dia' },
-                { value: '7', label: 'Depois de 7 dias' },
-                { value: '30', label: 'Depois de 30 dias' },
-                { value: '-1', label: 'Nunca apagar' },
-              ]}
             />
           </Row>
           <Row label="Mensagens enviadas a quem entra">

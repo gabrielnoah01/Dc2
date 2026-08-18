@@ -57,13 +57,28 @@ export interface NotificationSettings {
   volume: number;
 }
 
-/** Quanto tempo o histórico fica guardado. `0` = não salvar, `-1` = para sempre. */
-export type RetentionDays = 0 | 1 | 7 | 30 | -1;
+/**
+ * Dias de retenção. Número livre para o usuário escolher o que quiser;
+ * `-1` significa "nunca apagar".
+ */
+export type RetentionDays = number;
+
+/** Sugestões prontas na interface — o campo continua aceitando qualquer valor. */
+export const RETENTION_PRESETS = [1, 3, 7, 14, 30, 90, 180, 365] as const;
+
+export const NEVER_DELETE: RetentionDays = -1;
 
 export interface ChatSettings {
   /** Guardar a conversa em disco (só o host guarda; ele é o dono da sala). */
   saveHistory: boolean;
+  /** Apaga mensagens mais velhas que isto. */
   retentionDays: RetentionDays;
+  /**
+   * Apaga a conversa inteira depois de tanto tempo sem uso. Diferente da
+   * retenção de mensagens: uma conversa que ninguém abre há meses some por
+   * completo, com imagens e tudo.
+   */
+  conversationRetentionDays: RetentionDays;
   /** Quantas mensagens quem entra recebe de histórico. */
   historyOnJoin: number;
   /** Teto por imagem depois da compressão, em MB. */
@@ -135,6 +150,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chat: {
     saveHistory: true,
     retentionDays: 7,
+    conversationRetentionDays: 90,
     historyOnJoin: 200,
     maxImageMb: 2,
     imageQuality: 82,
