@@ -7,6 +7,11 @@ files:
   - dist/**
   - package.json
 # `ws` (única dependência de runtime) entra sozinho por estar em "dependencies".
+# O ícone da bandeja é lido em tempo de execução, então precisa existir como
+# arquivo ao lado do app — dentro do asar o Tray não consegue carregá-lo.
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
 win:
   icon: build/icon.ico
   target:
