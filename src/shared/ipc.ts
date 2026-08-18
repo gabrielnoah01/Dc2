@@ -31,8 +31,8 @@ export interface CreateServerResult {
   localInviteCode: string;
   publicIp: string | null;
   localIp: string;
-  /** Se o roteador aceitou abrir a porta sozinho. */
-  portMapped: boolean;
+  /** Como está a abertura da porta no roteador. */
+  portStatus: PortStatus;
   portMappingDetail?: string;
   /** Operadora usa CGNAT: nem port-forward resolve, só rede local ou túnel. */
   behindCarrierNat?: boolean;
@@ -200,7 +200,14 @@ export interface ConnectionUpdate {
   inviteCode: string | null;
   inviteUrl: string | null;
   publicIp: string | null;
-  portMapped: boolean;
+  portStatus: PortStatus;
   portMappingDetail?: string;
   behindCarrierNat?: boolean;
 }
+
+/**
+ * `checking` é essencial: falar com o roteador leva segundos, e mostrar
+ * "não consegui abrir a porta" enquanto a tentativa ainda está em curso faz o
+ * usuário desistir de algo que ia funcionar.
+ */
+export type PortStatus = 'checking' | 'mapped' | 'closed';

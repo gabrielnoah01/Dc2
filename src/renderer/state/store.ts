@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { ChatMessage, Participant } from '@shared/protocol';
-import type { ConnectionUpdate, Role } from '@shared/ipc';
+import type { ConnectionUpdate, PortStatus, Role } from '@shared/ipc';
 
 export interface ConnectionInfo {
   /** Código curto com IP público (pode faltar se a detecção falhar). */
@@ -11,7 +11,7 @@ export interface ConnectionInfo {
   publicIp: string | null;
   localIp: string | null;
   port: number;
-  portMapped: boolean;
+  portStatus: PortStatus;
   portMappingDetail?: string;
   behindCarrierNat?: boolean;
 }

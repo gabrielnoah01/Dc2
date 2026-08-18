@@ -20,6 +20,13 @@ export interface PortMappingResult {
   behindCarrierNat?: boolean;
 }
 
+interface UpnpMapping {
+  public: { host: string; port: number };
+  private: { host: string; port: number };
+  description: string;
+  enabled: boolean;
+}
+
 interface UpnpClient {
   createMapping(options: {
     public: number;
@@ -29,6 +36,7 @@ interface UpnpClient {
     description: string;
   }): Promise<unknown>;
   removeMapping(options: { public: number; protocol: string }): Promise<unknown>;
+  getMappings(): Promise<UpnpMapping[]>;
   getPublicIp(): Promise<string>;
   close(): void;
 }
@@ -46,13 +54,7 @@ export async function mapPort(port: number, timeoutMs = 8000): Promise<PortMappi
     const { Client } = nodeRequire('@runonflux/nat-upnp');
     const active = new Client({ timeout: timeoutMs }) as UpnpClient;
 
-    await active.createMapping({
-      public: port,
-      private: port,
-      ttl: 3600,
-      protocol: 'TCP',
-      description: APP_NAME,
-    });
+    await createMappingWithRecovery(active, port);
 
     client = active;
     mappedPort = port;
@@ -96,6 +98,49 @@ export async function unmapPort(): Promise<void> {
     active.close();
   } catch {
     // idem
+  }
+}
+
+/**
+ * Cria o mapeamento e se recupera do caso mais comum de falha: já existir uma
+ * entrada para esta porta.
+ *
+ * Isso acontece toda vez que o app é encerrado sem passar pelo desligamento
+ * limpo (queda de energia, fim de processo). O roteador guarda a entrada, e
+ * daí em diante recusa qualquer nova com um HTTP 500 seco — que a lib repassa
+ * como se o UPnP estivesse desligado. O usuário fica vendo "não consegui abrir
+ * a porta" para sempre, num roteador que aceita UPnP sem problema.
+ */
+async function createMappingWithRecovery(active: UpnpClient, port: number): Promise<void> {
+  const request = () =>
+    active.createMapping({
+      public: port,
+      private: port,
+      ttl: 3600,
+      protocol: 'TCP',
+      description: APP_NAME,
+    });
+
+  try {
+    await request();
+    return;
+  } catch (error) {
+    const existing = await findMapping(active, port);
+    // Falhou e não há entrada conflitante: é problema de verdade.
+    if (!existing) throw error;
+  }
+
+  // Tira a entrada velha da frente e tenta de novo.
+  await active.removeMapping({ public: port, protocol: 'TCP' });
+  await request();
+}
+
+async function findMapping(active: UpnpClient, port: number): Promise<UpnpMapping | null> {
+  try {
+    const mappings = await active.getMappings();
+    return mappings.find((mapping) => mapping.public.port === port) ?? null;
+  } catch {
+    return null;
   }
 }
 

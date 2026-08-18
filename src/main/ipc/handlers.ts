@@ -199,7 +199,8 @@ async function createServer(
       localInviteCode: buildInviteCode({ host: localIp, port: options.port, token }),
       publicIp: null,
       localIp,
-      portMapped: false,
+      // Ainda estamos falando com o roteador; a resposta chega por evento.
+      portStatus: 'checking',
     },
   };
 }
@@ -227,7 +228,7 @@ async function resolveNetworkInBackground(port: number, token: string): Promise<
     inviteCode: externalIp ? buildInviteCode({ host: externalIp, port, token }) : null,
     inviteUrl: externalIp ? buildInviteUrl({ host: externalIp, port, token }) : null,
     publicIp: externalIp,
-    portMapped: mapping.status === 'mapped',
+    portStatus: mapping.status === 'mapped' ? 'mapped' : 'closed',
     portMappingDetail: mapping.detail,
     behindCarrierNat: mapping.behindCarrierNat,
   };

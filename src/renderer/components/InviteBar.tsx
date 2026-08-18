@@ -1,66 +1,76 @@
 import { useState } from 'react';
 import type { ConnectionInfo } from '../state/store';
+import { Icon } from './Icons';
 
 /**
- * O host precisa de duas respostas na mão: "o que eu mando pro pessoal?" e
- * "dá pra entrar pela internet ou só pela minha rede?".
+ * O que o host precisa ter à mão: o que mandar para o pessoal, e se dá para
+ * entrar pela internet ou só pela rede local.
+ *
+ * Os códigos ficam **escondidos por padrão**. Este é um app de compartilhar
+ * tela: o código carrega o IP e o token, e quem estiver assistindo à
+ * transmissão — ou passando atrás da cadeira — entraria na sala sem ser
+ * convidado. Copiar funciona sem revelar nada.
  */
 export function InviteBar({ connection }: { connection: ConnectionInfo }) {
+  const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   function copy(kind: string, value: string) {
     void navigator.clipboard.writeText(value);
     setCopied(kind);
-    window.setTimeout(() => setCopied((current) => (current === kind ? null : current)), 1500);
+    window.setTimeout(() => setCopied((current) => (current === kind ? null : current)), 1600);
   }
 
-  // Pela internet só funciona com a porta aberta e sem CGNAT da operadora.
+  const checking = connection.portStatus === 'checking';
   const internetWorks =
-    connection.inviteCode !== null && connection.portMapped && !connection.behindCarrierNat;
+    connection.inviteCode !== null &&
+    connection.portStatus === 'mapped' &&
+    !connection.behindCarrierNat;
 
   return (
     <header className="flex animate-slide-down flex-col gap-2 border-b border-ink-700/70 bg-ink-800/70 px-4 py-2 text-sm backdrop-blur-sm">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-slate-400">Mesmo Wi-Fi:</span>
-        <code className="rounded bg-ink-900 px-2 py-1 text-slate-200">
-          {connection.localInviteCode}
-        </code>
-        <button
-          className="btn-ghost px-2 py-1 text-xs"
-          onClick={() => copy('lan', connection.localInviteCode)}
-        >
-          {copied === 'lan' ? 'copiado' : 'copiar'}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <CodeChip
+          icon={<Icon.wifi size={13} />}
+          label="Mesmo Wi-Fi"
+          code={connection.localInviteCode}
+          revealed={revealed}
+          copied={copied === 'lan'}
+          onCopy={() => copy('lan', connection.localInviteCode)}
+        />
 
         {connection.inviteCode && (
-          <>
-            <span className="ml-2 text-slate-400">Internet:</span>
-            <code
-              className={`rounded bg-ink-900 px-2 py-1 ${
-                internetWorks ? 'text-slate-200' : 'text-slate-500 line-through'
-              }`}
-            >
-              {connection.inviteCode}
-            </code>
-            <button
-              className="btn-ghost px-2 py-1 text-xs"
-              onClick={() => copy('net', connection.inviteCode!)}
-              disabled={!internetWorks}
-            >
-              {copied === 'net' ? 'copiado' : 'copiar'}
-            </button>
-          </>
+          <CodeChip
+            icon={<Icon.globe size={13} />}
+            label="Internet"
+            code={connection.inviteCode}
+            revealed={revealed}
+            copied={copied === 'net'}
+            disabled={!internetWorks}
+            onCopy={() => copy('net', connection.inviteCode!)}
+          />
         )}
 
-        <span
-          className={`ml-auto text-xs ${connection.portMapped ? 'text-emerald-400' : 'text-amber-300'}`}
-          title={connection.portMappingDetail}
+        <button
+          className="btn-ghost gap-1.5 px-2 py-1 text-xs"
+          onClick={() => setRevealed((current) => !current)}
+          title={
+            revealed ? 'esconder de novo — o código dá acesso à sala' : 'mostrar o código na tela'
+          }
         >
-          {connection.portMapped
-            ? `porta ${connection.port} aberta automaticamente`
-            : `porta ${connection.port} fechada`}
-        </span>
+          {revealed ? <EyeOff /> : <Eye />}
+          {revealed ? 'Esconder' : 'Mostrar'}
+        </button>
+
+        <PortStatusLabel connection={connection} />
       </div>
+
+      {checking && (
+        <p className="text-xs text-slate-500">
+          Falando com o roteador para abrir a porta {connection.port}… isso leva alguns
+          segundos. O link de rede local já funciona.
+        </p>
+      )}
 
       {connection.behindCarrierNat && (
         <p className="text-xs text-amber-300">
@@ -70,7 +80,7 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
         </p>
       )}
 
-      {!connection.portMapped && !connection.behindCarrierNat && (
+      {connection.portStatus === 'closed' && !connection.behindCarrierNat && (
         <p className="text-xs text-amber-300">
           Não consegui abrir a porta {connection.port} sozinho (UPnP desligado no roteador).
           Pela internet só vai funcionar se você liberar a porta {connection.port} TCP no
@@ -78,5 +88,118 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
         </p>
       )}
     </header>
+  );
+}
+
+function CodeChip({
+  icon,
+  label,
+  code,
+  revealed,
+  copied,
+  disabled = false,
+  onCopy,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  code: string;
+  revealed: boolean;
+  copied: boolean;
+  disabled?: boolean;
+  onCopy(): void;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-lg bg-ink-950/70 py-1 pl-2.5 pr-1 ring-1 ring-ink-600 ${
+        disabled ? 'opacity-50' : ''
+      }`}
+    >
+      <span className="flex items-center gap-1.5 text-xs text-slate-500">
+        {icon}
+        {label}
+      </span>
+
+      <code
+        className={`font-mono text-xs ${revealed ? 'text-slate-200' : 'select-none text-slate-600'}`}
+        // Escondido, mostramos pontos do tamanho aproximado do código, para a
+        // barra não pular de largura quando o usuário revela.
+        title={revealed ? code : 'código escondido'}
+      >
+        {revealed ? code : '•'.repeat(Math.min(22, code.length))}
+      </code>
+
+      <button
+        className={`rounded-md p-1.5 transition-colors ${
+          copied ? 'text-speak' : 'text-slate-500 hover:bg-ink-700 hover:text-slate-200'
+        }`}
+        onClick={onCopy}
+        disabled={disabled}
+        title="Copiar (funciona mesmo escondido)"
+      >
+        {copied ? <Icon.check size={14} /> : <Icon.copy size={14} />}
+      </button>
+    </div>
+  );
+}
+
+function PortStatusLabel({ connection }: { connection: ConnectionInfo }) {
+  if (connection.portStatus === 'checking') {
+    return (
+      <span className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
+        <span className="h-3 w-3 animate-spin-slow rounded-full border border-slate-600 border-t-accent" />
+        verificando roteador…
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`ml-auto text-xs ${
+        connection.portStatus === 'mapped' ? 'text-speak' : 'text-amber-300'
+      }`}
+      title={connection.portMappingDetail}
+    >
+      {connection.portStatus === 'mapped'
+        ? `porta ${connection.port} aberta automaticamente`
+        : `porta ${connection.port} fechada`}
+    </span>
+  );
+}
+
+function Eye() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOff() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M10.6 6.2A9.9 9.9 0 0 1 12 6c6.5 0 10 6 10 6a18 18 0 0 1-2.7 3.4M6.6 6.6A18 18 0 0 0 2 12s3.5 6 10 6a9.7 9.7 0 0 0 4-.8" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20" />
+    </svg>
   );
 }
