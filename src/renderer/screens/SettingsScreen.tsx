@@ -33,8 +33,8 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-30 flex bg-ink-900">
-      <nav className="flex w-56 shrink-0 flex-col gap-1 border-r border-ink-700 bg-ink-800 p-3">
+    <div className="fixed bottom-0 left-0 right-0 top-8 z-30 flex animate-fade-in bg-ink-900">
+      <nav className="flex w-56 shrink-0 flex-col gap-1 border-r border-ink-700/70 bg-ink-800/60 p-3 backdrop-blur-sm">
         <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-slate-500">
           Configurações
         </h2>
@@ -42,10 +42,10 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           <button
             key={item.id}
             onClick={() => setTab(item.id)}
-            className={`rounded-md px-3 py-2 text-left text-sm transition-colors ${
+            className={`rounded-lg px-3 py-2 text-left text-sm transition-all duration-150 ${
               tab === item.id
-                ? 'bg-ink-600 text-slate-100'
-                : 'text-slate-400 hover:bg-ink-700 hover:text-slate-200'
+                ? 'bg-ink-600 text-slate-100 shadow-sm'
+                : 'text-slate-400 hover:bg-ink-700/70 hover:text-slate-200'
             }`}
           >
             {item.label}

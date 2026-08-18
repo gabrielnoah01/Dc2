@@ -32,7 +32,7 @@ export function VoiceControls(props: Props) {
 
   return (
     <>
-      <footer className="flex items-center gap-3 border-t border-ink-600 bg-ink-800 px-4 py-3">
+      <footer className="flex items-center gap-3 border-t border-ink-700/70 bg-ink-800/70 px-4 py-3 backdrop-blur-sm">
         <button
           className={props.muted ? 'btn bg-red-900 text-red-100 hover:bg-red-800' : 'btn-ghost'}
           onClick={props.onToggleMute}

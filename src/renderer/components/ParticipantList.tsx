@@ -17,7 +17,7 @@ export function ParticipantList({ participants, selfId, speakingIds, screenShare
   const setSettingsOpen = useSettings((s) => s.setOpen);
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-ink-600 bg-ink-800">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/70 bg-ink-800/60 backdrop-blur-sm">
       <div className="flex items-center gap-2 px-4 py-3">
         <h2 className="text-xs uppercase tracking-wide text-slate-500">
           Conectados — {participants.length}
@@ -43,12 +43,14 @@ export function ParticipantList({ participants, selfId, speakingIds, screenShare
               <button
                 onClick={() => setOpenFor((current) => (current === participant.id ? null : participant.id))}
                 disabled={isSelf}
-                className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-ink-700 disabled:hover:bg-transparent"
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors duration-150 hover:bg-ink-700/70 disabled:hover:bg-transparent"
                 title={isSelf ? '' : 'clique para ajustar volume ou silenciar (só para você)'}
               >
                 <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full bg-ink-600 text-sm font-medium ring-2 transition-colors ${
-                    isSpeaking ? 'ring-emerald-400' : 'ring-transparent'
+                  className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-ink-500 to-ink-600 text-sm font-medium ring-2 transition-all duration-200 ${
+                    isSpeaking
+                      ? 'animate-ring-pulse scale-105 ring-speak'
+                      : 'ring-transparent'
                   }`}
                 >
                   {participant.username.slice(0, 1).toUpperCase()}
@@ -120,7 +122,7 @@ function PeerPopover({ username, onClose }: { username: string; onClose(): void 
   return (
     <div
       ref={ref}
-      className="absolute left-2 right-2 z-10 mt-1 flex flex-col gap-3 rounded-md bg-ink-900 p-3 shadow-lg ring-1 ring-ink-500"
+      className="absolute left-2 right-2 z-10 mt-1 flex animate-pop-in flex-col gap-3 rounded-lg bg-ink-800 p-3 shadow-pop ring-1 ring-ink-500"
     >
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-xs font-medium text-slate-300">{username}</span>

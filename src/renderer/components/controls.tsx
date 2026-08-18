@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Dropdown } from './Dropdown';
 
 /** Controles reutilizados pela tela de configurações. */
 
 export function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3 border-b border-ink-700 pb-6">
+    <section className="flex animate-fade-up flex-col gap-3 border-b border-ink-700/70 pb-6">
       <div>
         <h3 className="text-sm font-medium text-slate-200">{title}</h3>
         {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
@@ -32,12 +33,12 @@ export function Toggle({ value, onChange }: { value: boolean; onChange(next: boo
       role="switch"
       aria-checked={value}
       onClick={() => onChange(!value)}
-      className={`relative h-6 w-11 rounded-full transition-colors ${
-        value ? 'bg-accent' : 'bg-ink-500'
+      className={`relative h-6 w-11 rounded-full transition-all duration-200 ${
+        value ? 'bg-accent shadow-[0_0_12px_-2px_theme(colors.accent.glow)]' : 'bg-ink-500'
       }`}
     >
       <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all duration-200 ease-[cubic-bezier(.22,1,.36,1)] ${
           value ? 'left-[22px]' : 'left-0.5'
         }`}
       />
@@ -69,7 +70,8 @@ export function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-1 w-44 cursor-pointer appearance-none rounded-full bg-ink-500 accent-accent"
+        className="h-1.5 w-44 cursor-pointer appearance-none rounded-full bg-ink-600 accent-accent
+          transition-colors hover:bg-ink-500"
       />
       <span className="w-14 text-right text-xs tabular-nums text-slate-400">
         {value}
@@ -88,19 +90,7 @@ export function Select<T extends string>({
   options: { value: T; label: string }[];
   onChange(next: T): void;
 }) {
-  return (
-    <select
-      className="field w-64"
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
+  return <Dropdown value={value} options={options} onChange={onChange} />;
 }
 
 /**
@@ -162,10 +152,10 @@ export function ShortcutInput({
           setConflict(null);
           setRecording((current) => !current);
         }}
-        className={`w-56 rounded-md px-3 py-2 text-xs ring-1 transition-colors ${
+        className={`w-56 rounded-lg px-3 py-2 text-xs ring-1 transition-all duration-150 ${
           recording
-            ? 'bg-accent-soft text-accent ring-accent'
-            : 'bg-ink-900 text-slate-300 ring-ink-500 hover:ring-ink-500'
+            ? 'animate-pulse bg-accent-soft text-accent ring-2 ring-accent'
+            : 'bg-ink-950/80 text-slate-300 ring-ink-600 hover:ring-ink-500'
         }`}
       >
         {recording ? 'pressione a combinação…' : value || 'nenhum atalho'}

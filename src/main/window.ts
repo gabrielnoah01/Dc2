@@ -11,9 +11,17 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     title: APP_NAME,
-    backgroundColor: '#0d0e12',
+    backgroundColor: '#08090d',
     show: false,
     autoHideMenuBar: true,
+    // Esconde a barra do Windows mas mantém minimizar/maximizar/fechar nativos,
+    // desenhados na cor do app em vez do cinza padrão do sistema.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0d0e13',
+      symbolColor: '#94a3b8',
+      height: 32,
+    },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -19,7 +19,7 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
     connection.inviteCode !== null && connection.portMapped && !connection.behindCarrierNat;
 
   return (
-    <header className="flex flex-col gap-2 border-b border-ink-600 bg-ink-800 px-4 py-2 text-sm">
+    <header className="flex animate-slide-down flex-col gap-2 border-b border-ink-700/70 bg-ink-800/70 px-4 py-2 text-sm backdrop-blur-sm">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-slate-400">Mesmo Wi-Fi:</span>
         <code className="rounded bg-ink-900 px-2 py-1 text-slate-200">

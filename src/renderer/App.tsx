@@ -5,6 +5,8 @@ import { HomeScreen } from './screens/HomeScreen';
 import { ServerScreen } from './screens/ServerScreen';
 import { UpdateBanner } from './components/UpdateBanner';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { Splash } from './components/Splash';
+import { TitleBar } from './components/TitleBar';
 import { initSettings, useSettings } from './state/settings';
 import { applyRuntimeSettings } from './webrtc/runtime';
 import { playCue } from './sounds';
@@ -25,6 +27,7 @@ export function App() {
   const setSettingsOpen = useSettings((s) => s.setOpen);
 
   const settings = useSettings((s) => s.settings);
+  const settingsLoaded = useSettings((s) => s.loaded);
 
   useEffect(() => {
     void initSettings();
@@ -73,6 +76,8 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col">
+      <Splash ready={settingsLoaded} />
+      <TitleBar />
       <UpdateBanner status={update} />
       <div className="min-h-0 flex-1">
         {role === null ? <HomeScreen /> : <ServerScreen />}

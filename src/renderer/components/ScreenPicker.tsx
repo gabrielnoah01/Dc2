@@ -75,11 +75,11 @@ export function ScreenPicker({ listSources, onConfirm, onCancel }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-20 flex items-center justify-center bg-black/70 p-6"
+      className="scrim"
       onClick={onCancel}
     >
       <div
-        className="card flex max-h-full w-full max-w-3xl flex-col gap-4"
+        className="card flex max-h-full w-full max-w-3xl animate-pop-in flex-col gap-4"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex items-center gap-3">
@@ -112,9 +112,9 @@ export function ScreenPicker({ listSources, onConfirm, onCancel }: Props) {
                     key={source.id}
                     onClick={() => setSelected(source.id)}
                     onDoubleClick={() => void confirm()}
-                    className={`rounded-md p-2 text-left ring-1 transition-colors ${
+                    className={`rounded-lg p-2 text-left ring-1 transition-all duration-200 ${
                       isSelected
-                        ? 'bg-ink-700 ring-2 ring-accent'
+                        ? 'scale-[1.02] bg-ink-700 shadow-glow ring-2 ring-accent'
                         : 'ring-ink-600 hover:bg-ink-700 hover:ring-ink-500'
                     }`}
                   >

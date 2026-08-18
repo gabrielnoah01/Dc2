@@ -3,6 +3,8 @@ import { useSession } from '../state/store';
 import { APP_NAME, DEFAULT_PORT, MAX_USERNAME_LENGTH } from '@shared/constants';
 import { useSettings } from '../state/settings';
 import type { ConversationSummary } from '@shared/ipc';
+import { Logo } from '../components/Logo';
+import { Dropdown } from '../components/Dropdown';
 
 export function HomeScreen() {
   const startHost = useSession((s) => s.startHost);
@@ -84,29 +86,37 @@ export function HomeScreen() {
   return (
     <div className="relative flex h-full flex-col items-center justify-center gap-8 p-8">
       <button
-        className="absolute right-6 top-6 text-slate-500 transition-colors hover:text-slate-200"
+        className="btn-ghost absolute right-6 top-6 px-3 py-1.5 text-xs"
         onClick={() => setSettingsOpen(true)}
         title="Configurações"
       >
         ⚙ Configurações
       </button>
 
-      <header className="text-center">
-        <h1 className="text-5xl font-semibold tracking-tight text-accent">{APP_NAME}</h1>
-        <p className="mt-2 text-sm text-slate-400">
+      <header className="flex animate-fade-up flex-col items-center text-center">
+        <div className="relative mb-4">
+          <div className="absolute inset-0 -z-10 rounded-full bg-accent/20 blur-2xl" />
+          <Logo size={64} />
+        </div>
+        <h1 className="bg-gradient-to-b from-white to-slate-400 bg-clip-text text-5xl font-semibold tracking-tight text-transparent">
+          {APP_NAME}
+        </h1>
+        <p className="mt-2 max-w-md text-sm text-slate-500">
           Conversa direta entre amigos. Sem servidor no meio: alguém abre, os outros entram.
         </p>
       </header>
 
       {lastError && (
-        <p className="max-w-xl rounded-md bg-red-950/60 px-4 py-2 text-center text-sm text-red-300 ring-1 ring-red-900">
+        <p className="max-w-xl animate-pop-in rounded-lg bg-red-950/70 px-4 py-2 text-center text-sm text-red-300 ring-1 ring-red-900/80">
           {lastError}
         </p>
       )}
 
-      <div className="grid w-full max-w-3xl gap-5 md:grid-cols-2">
-        <section className="card flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Criar servidor</h2>
+      <div className="grid w-full max-w-3xl animate-fade-up gap-5 [animation-delay:80ms] md:grid-cols-2">
+        <section className="card flex flex-col gap-3 transition-shadow duration-300 hover:shadow-glow">
+          <h2 className="flex items-center gap-2 text-lg font-medium">
+            <span className="text-accent">◈</span> Criar servidor
+          </h2>
           <p className="text-sm text-slate-400">
             Seu PC vira o ponto de encontro. Ele precisa ficar aberto enquanto durar a conversa.
           </p>
@@ -128,18 +138,19 @@ export function HomeScreen() {
           {conversations.length > 0 && (
             <>
               <label className="text-xs uppercase tracking-wide text-slate-500">Conversa</label>
-              <select
-                className="field"
+              <Dropdown
+                className="w-full"
                 value={conversationId}
-                onChange={(e) => setConversationId(e.target.value)}
-              >
-                <option value="">Nova conversa</option>
-                {conversations.map((conversation) => (
-                  <option key={conversation.id} value={conversation.id}>
-                    {conversation.name} — {conversation.messageCount} msg
-                  </option>
-                ))}
-              </select>
+                onChange={setConversationId}
+                options={[
+                  { value: '', label: 'Nova conversa', hint: 'começa do zero' },
+                  ...conversations.map((conversation) => ({
+                    value: conversation.id,
+                    label: conversation.name,
+                    hint: `${conversation.messageCount} mensagens`,
+                  })),
+                ]}
+              />
             </>
           )}
           <button className="btn-primary mt-2" disabled={!canCreate} onClick={createServer}>
@@ -147,8 +158,10 @@ export function HomeScreen() {
           </button>
         </section>
 
-        <section className="card flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Entrar em servidor</h2>
+        <section className="card flex flex-col gap-3 transition-shadow duration-300 hover:shadow-glow">
+          <h2 className="flex items-center gap-2 text-lg font-medium">
+            <span className="text-accent">→</span> Entrar em servidor
+          </h2>
           <p className="text-sm text-slate-400">
             Cole o link ou o código que a pessoa que abriu o servidor te mandou.
           </p>

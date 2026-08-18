@@ -70,7 +70,7 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
       }}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-ink-900/80 text-sm text-accent">
+        <div className="pointer-events-none absolute inset-2 z-10 flex animate-fade-in items-center justify-center rounded-xl border-2 border-dashed border-accent bg-ink-950/85 text-sm text-accent backdrop-blur-sm">
           Solte a imagem para anexar
         </div>
       )}
@@ -82,7 +82,7 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
           </p>
         )}
         {messages.map((message) => (
-          <div key={message.id} className="text-sm leading-relaxed">
+          <div key={message.id} className="animate-fade-up text-sm leading-relaxed">
             <span
               className={`font-medium ${message.fromId === selfId ? 'text-accent' : 'text-slate-200'}`}
             >
@@ -111,7 +111,7 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
       )}
 
       {pending && (
-        <div className="mx-3 mb-2 flex items-center gap-3 rounded-md bg-ink-800 p-2 ring-1 ring-ink-600">
+        <div className="mx-3 mb-2 flex animate-pop-in items-center gap-3 rounded-lg bg-ink-800 p-2 ring-1 ring-ink-600">
           <img src={pending.dataUrl} alt="" className="h-14 w-20 rounded object-cover" />
           <span className="min-w-0 flex-1 truncate text-xs text-slate-400">
             {pending.name} · {formatSize(estimateBytes(pending.dataUrl))}
@@ -178,10 +178,14 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
 
       {lightbox && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/85 p-6"
+          className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-ink-950/90 p-6 backdrop-blur-sm"
           onClick={() => setLightbox(null)}
         >
-          <img src={lightbox} alt="" className="max-h-full max-w-full object-contain" />
+          <img
+            src={lightbox}
+            alt=""
+            className="max-h-full max-w-full animate-pop-in rounded-lg object-contain shadow-pop"
+          />
         </div>
       )}
     </section>
@@ -207,7 +211,7 @@ function AttachmentView({
   if (!attachment.dataUrl) {
     return (
       <button
-        className="mt-1 flex items-center gap-2 rounded-md bg-ink-800 px-3 py-2 text-xs text-slate-400 ring-1 ring-ink-600 hover:ring-accent"
+        className="mt-1 flex items-center gap-2 rounded-lg bg-ink-800 px-3 py-2 text-xs text-slate-400 ring-1 ring-ink-600 transition-colors hover:ring-accent"
         disabled={loading}
         onClick={() => {
           setLoading(true);
@@ -222,7 +226,7 @@ function AttachmentView({
 
   return (
     <button
-      className="mt-1 block max-w-sm overflow-hidden rounded-md ring-1 ring-ink-600 hover:ring-accent"
+      className="mt-1 block max-w-sm overflow-hidden rounded-lg ring-1 ring-ink-600 transition-all duration-200 hover:scale-[1.01] hover:ring-accent"
       onClick={() => onOpen(attachment.dataUrl!)}
       title={`${attachment.name} · ${formatSize(attachment.size)}`}
     >
