@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, Tray, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { APP_NAME } from '../shared/constants';
 import { logToFile } from './log';
+import { revealWindow } from './window';
 
 /**
  * Ícone na bandeja.
@@ -39,11 +40,7 @@ export function createTray(window: BrowserWindow): boolean {
   tray = new Tray(icon);
   tray.setToolTip(APP_NAME);
 
-  const show = () => {
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  };
+  const show = () => revealWindow(window);
 
   tray.setContextMenu(
     Menu.buildFromTemplate([

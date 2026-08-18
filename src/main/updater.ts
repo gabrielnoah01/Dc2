@@ -47,6 +47,9 @@ export function registerUpdater(): void {
       state: 'downloading',
       version: current.version,
       percent: Math.round(progress.percent),
+      speed: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total,
     });
   });
 

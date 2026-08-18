@@ -111,7 +111,15 @@ export const IPC_EVENT = {
 export type UpdateStatus =
   | { state: 'idle'; version?: string }
   | { state: 'checking'; version?: string }
-  | { state: 'downloading'; version?: string; percent: number }
+  | {
+      state: 'downloading';
+      version?: string;
+      percent: number;
+      /** Bytes por segundo, para mostrar a velocidade real. */
+      speed?: number;
+      transferred?: number;
+      total?: number;
+    }
   | { state: 'ready'; version?: string }
   | { state: 'unavailable'; version?: string; detail?: string };
 

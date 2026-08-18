@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron';
-import { createMainWindow } from './window';
+import { createMainWindow, revealWindow } from './window';
 import { registerIpcHandlers, disposeSession } from './ipc/handlers';
 import { registerDisplayMediaHandler } from './screenSource';
 import { checkForUpdates, registerUpdater } from './updater';
@@ -51,11 +51,9 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('second-instance', () => {
+  logToFile('boot', 'segunda abertura — trazendo a janela existente para a frente');
   const [window] = BrowserWindow.getAllWindows();
-  if (!window) return;
-  if (window.isMinimized()) window.restore();
-  window.show();
-  window.focus();
+  if (window) revealWindow(window);
 });
 
 app.whenReady().then(() => {
