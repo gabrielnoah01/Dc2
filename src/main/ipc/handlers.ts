@@ -12,6 +12,7 @@ import {
   listConversations,
   openConversation,
   pruneConversations,
+  pruneEmptyConversations,
   pruneMessages,
   recentMessages,
 } from '../chatStore';
@@ -79,7 +80,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.requestAttachment, (_event, messageId: string) =>
     requestAttachment(messageId),
   );
-  ipcMain.handle(IPC.listConversations, () => listConversations());
+  ipcMain.handle(IPC.listConversations, () => {
+    // Conversa sem mensagem nenhuma é ruído na hora de escolher o que restaurar.
+    pruneEmptyConversations();
+    return listConversations().filter((conversation) => conversation.messageCount > 0);
+  });
   ipcMain.handle(IPC.deleteConversation, (_event, id: string) => deleteConversation(id));
   ipcMain.handle(IPC.clearConversation, (_event, id: string) => clearMessages(id));
 
@@ -144,6 +149,7 @@ async function createServer(
   pruneMessages(chat.retentionDays);
   // A conversa recém-aberta já está protegida: a limpeza pula a que está em uso.
   pruneConversations(chat.conversationRetentionDays);
+  pruneEmptyConversations();
   startRetentionTimer();
 
   const host = new HostServer(token, options.username, {

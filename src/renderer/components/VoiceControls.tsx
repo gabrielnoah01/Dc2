@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ScreenSource } from '@shared/ipc';
 import { ScreenPicker } from './ScreenPicker';
+import { Icon } from './Icons';
 import type { SharePresetId } from '../webrtc/quality';
 
 interface Props {
@@ -39,7 +40,8 @@ export function VoiceControls(props: Props) {
           disabled={!props.micReady}
           title={props.micReady ? '' : 'microfone indisponível'}
         >
-          {props.muted ? '🔇 Sem microfone' : '🎙 Microfone ligado'}
+          {props.muted ? <Icon.micOff size={15} /> : <Icon.mic size={15} />}
+          {props.muted ? 'Sem microfone' : 'Microfone ligado'}
         </button>
 
         <button
@@ -47,11 +49,13 @@ export function VoiceControls(props: Props) {
           onClick={props.onToggleDeafen}
           title="Para de ouvir todo mundo e cala seu microfone junto"
         >
-          {props.deafened ? '🔕 Sem ouvir' : '🎧 Ouvindo'}
+          {props.deafened ? <Icon.headphonesOff size={15} /> : <Icon.headphones size={15} />}
+          {props.deafened ? 'Sem ouvir' : 'Ouvindo'}
         </button>
 
         {props.sharing ? (
           <button className="btn bg-red-900 text-red-100 hover:bg-red-800" onClick={props.onStopShare}>
+            <Icon.screen size={15} />
             Parar de compartilhar
           </button>
         ) : (
@@ -59,7 +63,8 @@ export function VoiceControls(props: Props) {
             className="btn-ghost"
             onClick={() => setPicking(true)}
           >
-            🖥 Compartilhar tela
+            <Icon.screenShare size={15} />
+            Compartilhar tela
           </button>
         )}
 
@@ -68,8 +73,8 @@ export function VoiceControls(props: Props) {
           {props.sharerCount > 0 && ` · ${props.sharerCount} tela(s) no ar`}
         </span>
 
-        <button className="btn-ghost" onClick={props.onOpenSettings} title="Configurações">
-          ⚙
+        <button className="btn-ghost px-3" onClick={props.onOpenSettings} title="Configurações">
+          <Icon.settings size={16} />
         </button>
 
         <button
@@ -77,6 +82,7 @@ export function VoiceControls(props: Props) {
           onClick={props.onLeave}
           disabled={props.leaving}
         >
+          <Icon.exit size={15} />
           {props.isHost ? 'Encerrar servidor' : 'Sair'}
         </button>
       </footer>

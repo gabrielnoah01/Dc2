@@ -4,6 +4,7 @@ import { MAX_CHAT_LENGTH } from '@shared/constants';
 import type { ChatPayload, OutgoingAttachment } from '@shared/ipc';
 import { useSettings } from '../state/settings';
 import { compressImage } from '../image';
+import { Icon } from './Icons';
 
 interface Props {
   messages: ChatMessage[];
@@ -142,7 +143,7 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
           disabled={busy}
           title="Anexar imagem"
         >
-          {busy ? '…' : '📎'}
+          {busy ? <span className="animate-pulse">···</span> : <Icon.paperclip size={16} />}
         </button>
         <input
           className="field flex-1"
@@ -172,6 +173,7 @@ export function ChatPanel({ messages, selfId, compact, onSend }: Props) {
           onClick={send}
           disabled={busy || (draft.trim().length === 0 && !pending)}
         >
+          <Icon.send size={15} />
           Enviar
         </button>
       </div>
@@ -218,7 +220,8 @@ function AttachmentView({
           void window.only.requestAttachment(messageId);
         }}
       >
-        🖼 {attachment.name} · {formatSize(attachment.size)}
+        <Icon.image size={14} />
+        {attachment.name} · {formatSize(attachment.size)}
         <span className="text-slate-500">{loading ? 'carregando…' : 'clique para ver'}</span>
       </button>
     );

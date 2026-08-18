@@ -139,6 +139,22 @@ export function clearMessages(id: string): void {
  *
  * Devolve os nomes das que saíram, para poder registrar o que aconteceu.
  */
+/**
+ * Remove conversas sem nenhuma mensagem. Toda vez que alguém cria um servidor e
+ * não conversa, sobra uma pasta vazia — sem isso a lista de "restaurar" enche
+ * de entradas que não têm nada dentro. Apagar aqui não perde nada por definição.
+ */
+export function pruneEmptyConversations(): number {
+  let removed = 0;
+  for (const conversation of listConversations()) {
+    if (conversation.id === current?.meta.id) continue;
+    if (conversation.messageCount > 0) continue;
+    deleteConversation(conversation.id);
+    removed += 1;
+  }
+  return removed;
+}
+
 export function pruneConversations(retentionDays: RetentionDays): string[] {
   if (retentionDays < 0) return [];
 

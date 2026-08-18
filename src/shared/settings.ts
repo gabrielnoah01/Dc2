@@ -100,9 +100,20 @@ export interface NetworkSettings {
   useStun: boolean;
 }
 
+/** Um servidor em que já entramos, para voltar sem recolar o código. */
+export interface RecentServer {
+  /** Código completo, com token — é ele que faz a entrada funcionar. */
+  invite: string;
+  /** Como mostrar na lista: só o endereço, sem expor o token. */
+  label: string;
+  lastJoinedAt: number;
+}
+
 export interface AppSettings {
   /** Nome que já vem preenchido nas telas de criar/entrar. */
   username: string;
+  /** Últimos servidores em que entrou, do mais recente para o mais antigo. */
+  recentServers: RecentServer[];
   startWithWindows: boolean;
   /** Fechar a janela manda para a bandeja em vez de encerrar. */
   minimizeToTray: boolean;
@@ -179,6 +190,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   app: {
     username: '',
+    recentServers: [],
     startWithWindows: false,
     minimizeToTray: true,
     checkUpdates: true,

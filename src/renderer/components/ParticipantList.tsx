@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Participant } from '@shared/protocol';
 import { useSettings } from '../state/settings';
+import { Icon } from './Icons';
 
 interface Props {
   participants: Participant[];
@@ -19,7 +20,8 @@ export function ParticipantList({ participants, selfId, speakingIds, screenShare
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/70 bg-ink-800/60 backdrop-blur-sm">
       <div className="flex items-center gap-2 px-4 py-3">
-        <h2 className="text-xs uppercase tracking-wide text-slate-500">
+        <h2 className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+          <Icon.users size={13} />
           Conectados — {participants.length}
         </h2>
         <button
@@ -27,7 +29,7 @@ export function ParticipantList({ participants, selfId, speakingIds, screenShare
           onClick={() => setSettingsOpen(true)}
           title="Configurações"
         >
-          ⚙
+          <Icon.settings size={14} />
         </button>
       </div>
 
@@ -69,15 +71,9 @@ export function ParticipantList({ participants, selfId, speakingIds, screenShare
                   </span>
                 )}
                 {sharing.has(participant.id) && (
-                  <span className="text-xs" title="compartilhando a tela">
-                    🖥
-                  </span>
+                  <Icon.screen size={13} className="text-accent" />
                 )}
-                {isMuted && (
-                  <span className="text-xs" title="silenciada por você">
-                    🔇
-                  </span>
-                )}
+                {isMuted && <Icon.micOff size={13} className="text-slate-600" />}
               </button>
 
               {openFor === participant.id && !isSelf && (
@@ -127,14 +123,15 @@ function PeerPopover({ username, onClose }: { username: string; onClose(): void 
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-xs font-medium text-slate-300">{username}</span>
         <button
-          className={`rounded px-2 py-1 text-xs transition-colors ${
+          className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
             peer.muted
               ? 'bg-red-900 text-red-100 hover:bg-red-800'
               : 'bg-ink-600 text-slate-300 hover:bg-ink-500'
           }`}
           onClick={() => void setPeer(username, { muted: !peer.muted })}
         >
-          {peer.muted ? '🔇 Silenciada' : '🔊 Silenciar'}
+          {peer.muted ? <Icon.micOff size={12} /> : <Icon.mic size={12} />}
+          {peer.muted ? 'Silenciada' : 'Silenciar'}
         </button>
       </div>
 
