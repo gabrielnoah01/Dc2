@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSettings } from '../state/settings';
 import { Row, Section, Select, ShortcutInput, Slider, Toggle } from '../components/controls';
+import { IceServerEditor } from '../components/IceServerEditor';
 import { APP_NAME, MAX_USERNAME_LENGTH } from '@shared/constants';
 import type { ConversationSummary } from '@shared/ipc';
 import { RetentionPicker } from '../components/RetentionPicker';
@@ -422,17 +423,15 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
 
   function PeopleTab() {
     const names = Object.keys(settings.peers).sort((a, b) => a.localeCompare(b));
+    const { security } = settings;
 
-    if (names.length === 0) {
-      return (
+    const peerAdjustments =
+      names.length === 0 ? (
         <p className="text-sm text-slate-500">
           Ninguém ajustado ainda. Dentro de um servidor, clique numa pessoa na lista para
           silenciá-la ou mudar o volume dela — só para você. Os ajustes aparecem aqui.
         </p>
-      );
-    }
-
-    return (
+      ) : (
       <Section
         title="Ajustes por pessoa"
         hint="Valem só para você. A pessoa não é avisada e continua sendo ouvida pelos outros."
@@ -469,6 +468,37 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           );
         })}
       </Section>
+      );
+
+    return (
+      <>
+        <Section
+          title="Entrada no servidor"
+          hint="Vale quando você é o host. Mudar no meio da conversa só afeta quem chegar depois."
+        >
+          <Row
+            label="Aprovar cada pessoa na mão"
+            hint="Desligado, quem tem o convite entra direto. Ligado, você vê o pedido e decide."
+          >
+            <Toggle
+              value={security.approval === 'manual'}
+              onChange={(manual) =>
+                void save({ security: { approval: manual ? 'manual' : 'auto' } })
+              }
+            />
+          </Row>
+          <Row
+            label="Cada um fala direto com todos (malha)"
+            hint="Tira o gargalo de upload do host, que hoje repassa o áudio de todo mundo. Em troca, cada máquina abre mais conexões — bom até umas 5 pessoas."
+          >
+            <Toggle
+              value={settings.network.mesh}
+              onChange={(mesh) => void save({ network: { mesh } })}
+            />
+          </Row>
+        </Section>
+        {peerAdjustments}
+      </>
     );
   }
 
@@ -497,6 +527,15 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           />
         </Row>
         <Row
+          label="Ponte de internet quando a porta não abre"
+          hint="Se o roteador não liberar a porta (ou a operadora usar CGNAT), o convite passa a entrar por uma ponte da Cloudflare. Baixa ~35 MB na primeira vez. Voz e tela continuam diretas."
+        >
+          <Toggle
+            value={network.useTunnel}
+            onChange={(useTunnel) => void save({ network: { useTunnel } })}
+          />
+        </Row>
+        <Row
           label="Usar STUN público"
           hint="Necessário para voz e tela pela internet. Desligado, só funciona na rede local — e nenhum servidor de terceiro é contatado."
         >
@@ -505,6 +544,19 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
             onChange={(useStun) => void save({ network: { useStun } })}
           />
         </Row>
+        <Row
+          label="Passar toda a mídia pelo TURN"
+          hint="Esconde os IPs e prova que o seu TURN funciona, mas gasta a banda do servidor. Sem TURN configurado, não conecta."
+        >
+          <Toggle
+            value={network.forceRelay}
+            onChange={(forceRelay) => void save({ network: { forceRelay } })}
+          />
+        </Row>
+        <IceServerEditor
+          servers={network.iceServers}
+          onChange={(iceServers) => void save({ network: { iceServers } })}
+        />
       </Section>
     );
   }
@@ -575,6 +627,36 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
             <Slider
               value={notifications.volume}
               onChange={(volume) => void save({ notifications: { volume } })}
+            />
+          </Row>
+        </Section>
+
+        <Section title="Avisos do sistema">
+          <Row
+            label="Notificar mensagem no chat"
+            hint="O aviso do Windows, que aparece mesmo com o Only na bandeja"
+          >
+            <Toggle
+              value={notifications.desktopOnMessage}
+              onChange={(desktopOnMessage) => void save({ notifications: { desktopOnMessage } })}
+            />
+          </Row>
+          <Row
+            label="Só com a janela em segundo plano"
+            hint="Desligado, avisa também enquanto você está olhando a conversa"
+          >
+            <Toggle
+              value={notifications.onlyWhenUnfocused}
+              onChange={(onlyWhenUnfocused) => void save({ notifications: { onlyWhenUnfocused } })}
+            />
+          </Row>
+          <Row
+            label="Mostrar o texto no aviso"
+            hint="Desligado, aparece só quem mandou. Mensagem cifrada nunca vaza aqui"
+          >
+            <Toggle
+              value={notifications.showPreview}
+              onChange={(showPreview) => void save({ notifications: { showPreview } })}
             />
           </Row>
         </Section>

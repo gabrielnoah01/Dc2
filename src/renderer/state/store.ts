@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ChatMessage, Participant } from '@shared/protocol';
-import type { ConnectionUpdate, PortStatus, Role } from '@shared/ipc';
+import type { JoinRequest } from '@shared/ipc';
+import type { ConnectionUpdate, PortStatus, ReconnectStatus, Role } from '@shared/ipc';
 
 export interface ConnectionInfo {
   /** Código curto com IP público (pode faltar se a detecção falhar). */
@@ -27,7 +28,15 @@ interface SessionState {
   /** Erro fatal que derrubou a sessão; mostrado na HomeScreen. */
   lastError: string | null;
   busy: boolean;
-
+  /**
+   * Andamento da volta automática. Enquanto não desistir, a tela da sala
+   * continua montada - o histórico e a lista de gente seguem valendo.
+   */
+  reconnect: ReconnectStatus;
+  /** Quem bateu na porta e ainda espera o host decidir (só o host vê). */
+  joinRequests: JoinRequest[];
+  /** Convidado esperando o host abrir a porta (aprovação manual). */
+  joinPending: string | null;
   startHost(info: ConnectionInfo, selfId: string, participants: Participant[]): void;
   startGuest(selfId: string, participants: Participant[], screenSharerIds: string[]): void;
   endSession(reason?: string): void;
@@ -42,6 +51,10 @@ interface SessionState {
   applyConnectionUpdate(update: ConnectionUpdate): void;
   setError(error: string | null): void;
   setBusy(busy: boolean): void;
+  /** Traduz o andamento da volta em estado de tela. */
+  applyReconnect(status: ReconnectStatus): void;
+  setJoinRequests(requests: JoinRequest[]): void;
+  setJoinPending(reason: string | null): void;
 }
 
 const EMPTY = {
@@ -51,6 +64,9 @@ const EMPTY = {
   messages: [] as ChatMessage[],
   screenSharerIds: [] as string[],
   connection: null as ConnectionInfo | null,
+  reconnect: { state: 'idle' } as ReconnectStatus,
+  joinRequests: [] as JoinRequest[],
+  joinPending: null as string | null,
 };
 
 export const useSession = create<SessionState>((set) => ({
@@ -115,6 +131,32 @@ export const useSession = create<SessionState>((set) => ({
   setError: (lastError) => set({ lastError }),
 
   setBusy: (busy) => set({ busy }),
+
+  applyReconnect: (status) =>
+    set((state) => {
+      if (status.state === 'reconnected') {
+        // A sala voltou: troca só a identidade e quem está lá. Mensagens
+        // continuam onde estavam - a conversa não pisca.
+        return {
+          reconnect: status,
+          role: status.role,
+          selfId: status.selfId,
+          participants: status.participants,
+          screenSharerIds: status.screenSharerIds,
+          lastError: null,
+        };
+      }
+      if (status.state === 'failed') {
+        // Desistimos de verdade: aí sim volta para a tela inicial.
+        return { ...EMPTY, lastError: status.reason || null, busy: false };
+      }
+      // 'retrying' e 'connecting' mantêm a sala de pé.
+      return state.role ? { reconnect: status } : {};
+    }),
+
+  setJoinRequests: (joinRequests) => set({ joinRequests }),
+
+  setJoinPending: (joinPending) => set({ joinPending }),
 }));
 
 /** Helper: nome de um participante pelo id (fallback para ids já desconectados). */

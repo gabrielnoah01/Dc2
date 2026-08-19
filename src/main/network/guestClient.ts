@@ -5,10 +5,17 @@ import {
   parseMessage,
   serialize,
 } from '../../shared/protocol';
-import { PROTOCOL_VERSION } from '../../shared/constants';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  PROTOCOL_VERSION,
+} from '../../shared/constants';
+import { inviteAddress, type InviteInfo } from '../../shared/inviteLink';
 
 export interface GuestEvents {
   onMessage(message: ServerMessage): void;
+  /** O host usa aprovação manual: ainda não entramos, mas também não caímos. */
+  onPending(reason: string): void;
   onClosed(reason: string): void;
   onError(detail: string): void;
 }
@@ -21,12 +28,20 @@ export interface GuestEvents {
 export class GuestClient {
   private socket: WebSocket | null = null;
   private closedByUser = false;
+  private watchdog: NodeJS.Timeout | null = null;
+  private lastSeen = 0;
 
   constructor(private readonly events: GuestEvents) {}
 
-  connect(host: string, port: number, token: string, username: string): Promise<void> {
+  /**
+   * Disca para o host. O endereço sai do convite: `ws://ip:porta` no caminho
+   * direto, `wss://nome` quando o host subiu por túnel — para o resto do
+   * cliente os dois casos são idênticos.
+   */
+  connect(invite: InviteInfo, username: string): Promise<void> {
+    const { token } = invite;
     return new Promise((resolve, reject) => {
-      const address = formatAddress(host, port);
+      const address = inviteAddress(invite);
       const socket = new WebSocket(address, { handshakeTimeout: 8000 });
       this.socket = socket;
       this.closedByUser = false;
@@ -37,7 +52,26 @@ export class GuestClient {
         this.send({ type: 'join', token, username, protocol: PROTOCOL_VERSION });
       });
 
+      // Wi-Fi que cai, notebook que dorme, roteador que trava: nada disso fecha
+      // o socket. Sem este relógio o convidado fica olhando uma sala congelada
+      // em vez de acionar a reconexão.
+      this.lastSeen = Date.now();
+      this.watchdog = setInterval(() => {
+        if (Date.now() - this.lastSeen <= HEARTBEAT_TIMEOUT_MS) return;
+        this.stopWatchdog();
+        socket.terminate();
+      }, HEARTBEAT_INTERVAL_MS);
+
+      socket.on('ping', () => {
+        this.lastSeen = Date.now();
+      });
+
+      socket.on('pong', () => {
+        this.lastSeen = Date.now();
+      });
+
       socket.on('message', (raw) => {
+        this.lastSeen = Date.now();
         const message = parseMessage<ServerMessage>(raw.toString());
         if (!message) return;
 
@@ -61,6 +95,11 @@ export class GuestClient {
               return;
             }
             resolve();
+          } else if (message.type === 'join:pending') {
+            // Nem aceito nem recusado: a promessa continua de pé e quem está
+            // esperando merece saber por quê, senão parece travado.
+            this.events.onPending(message.reason ?? 'o host precisa aprovar sua entrada');
+            return;
           } else if (message.type === 'join:rejected') {
             settled = true;
             this.closedByUser = true;
@@ -92,6 +131,7 @@ export class GuestClient {
 
       socket.on('close', (code, reasonBuffer) => {
         const reason = describeClose(code, reasonBuffer.toString(), settled);
+        this.stopWatchdog();
         this.socket = null;
         if (!settled) {
           settled = true;
@@ -108,7 +148,13 @@ export class GuestClient {
     this.socket.send(serialize(message));
   }
 
+  private stopWatchdog(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+  }
+
   disconnect(): void {
+    this.stopWatchdog();
     if (!this.socket) return;
     this.closedByUser = true;
     this.send({ type: 'leave' });
@@ -119,13 +165,6 @@ export class GuestClient {
   get isConnected(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;
   }
-}
-
-function formatAddress(host: string, port: number): string {
-  // IPv6 literal precisa de colchetes na URL.
-  const needsBrackets = host.includes(':') && !host.startsWith('[');
-  const target = needsBrackets ? `[${host}]` : host;
-  return `ws://${target}:${port}`;
 }
 
 /**

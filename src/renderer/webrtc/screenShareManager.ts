@@ -100,16 +100,15 @@ export class ScreenShareManager {
     return this.localStream !== null;
   }
 
+  /** Conexões vivas, para quem quer medir a rede sem mexer na mídia. */
+  activeLinks(): PeerLink[] {
+    return [...this.links.values()];
+  }
+
   syncPeers(peerIds: string[]): void {
     if (this.stopped) return;
     const previousSize = this.links.size;
-    const wanted = new Set(
-      this.options.isHost
-        ? peerIds.filter((id) => id !== this.options.selfId)
-        : this.options.hostId
-          ? [this.options.hostId]
-          : [],
-    );
+    const wanted = new Set(this.wantedPeers(peerIds));
 
     for (const peerId of wanted) {
       if (!this.links.has(peerId)) this.openLink(peerId);
@@ -224,9 +223,29 @@ export class ScreenShareManager {
 
   // -------------------------------------------------------------------------
 
+  /** Em malha o convidado abre tela com a sala toda; em estrela só com o host. */
+  private wantedPeers(peerIds: string[]): string[] {
+    if (this.options.isHost || runtime.mesh) {
+      return peerIds.filter((id) => id !== this.options.selfId);
+    }
+    return this.options.hostId ? [this.options.hostId] : [];
+  }
+
+  /** Entre convidados o id desempata a colisão de ofertas; com o host, o papel. */
+  private politeWith(peerId: string): boolean {
+    if (this.options.isHost) return false;
+    if (peerId === this.options.hostId) return true;
+    return this.options.selfId < peerId;
+  }
+
+  /** Repasse do host só existe na estrela: em malha a tela já chega direto. */
+  private get relaying(): boolean {
+    return this.options.isHost && !runtime.mesh;
+  }
+
   private openLink(peerId: string): PeerLink {
     // Host é o lado "impolite" da negociação: em colisão, a oferta dele vence.
-    const link = new PeerLink(peerId, 'screen', !this.options.isHost, {
+    const link = new PeerLink(peerId, 'screen', this.politeWith(peerId), {
       onTrack: (track, stream) => this.handleRemoteTrack(peerId, track, stream),
       onTrackEnded: (track) => this.handleTrackEnded(peerId, track),
     });
@@ -244,7 +263,7 @@ export class ScreenShareManager {
     }
 
     // Quem entra no meio já recebe as telas que estão rolando.
-    if (this.options.isHost) {
+    if (this.relaying) {
       for (const entry of this.received) {
         if (entry.from === peerId) continue;
         this.forward(peerId, link, entry.track, entry.stream);
@@ -277,9 +296,11 @@ export class ScreenShareManager {
 
     this.received.push({ track, stream, from: peerId });
 
-    if (this.options.isHost) {
+    if (this.options.isHost || runtime.mesh) {
       // Numa conexão direta a tela é de quem está do outro lado.
       this.streamOwner.set(stream.id, peerId);
+    }
+    if (this.relaying) {
       for (const [otherId, link] of this.links) {
         if (otherId === peerId) continue;
         this.forward(otherId, link, track, stream);
@@ -366,7 +387,7 @@ export class ScreenShareManager {
     const screens: RemoteScreen[] = [];
     for (const entry of this.received) {
       // No host o dono é o peer da conexão; no convidado vem do mapa do host.
-      const ownerId = this.options.isHost
+      const ownerId = this.options.isHost || runtime.mesh
         ? entry.from
         : this.streamOwner.get(entry.stream.id);
       // Sem dono conhecido ainda, esperamos o mapa chegar em vez de rotular errado.

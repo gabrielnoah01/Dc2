@@ -4,9 +4,18 @@ export interface InviteInfo {
   host: string;
   port: number;
   token: string;
+  /**
+   * Endereço com TLS (`wss://`), sem porta explícita. É o caso do túnel: o
+   * convite não aponta mais para um IP e uma porta abertos no roteador, e sim
+   * para um nome que a borda da Cloudflare resolve.
+   */
+  secure?: boolean;
 }
 
 const BASE62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+/** Porta implícita de um convite `wss://`, que não carrega número. */
+const TLS_PORT = 443;
 
 /**
  * Token de sessão, regerado toda vez que o servidor sobe. Usa a fonte de
@@ -22,15 +31,33 @@ export function generateToken(length = TOKEN_LENGTH): string {
   return out;
 }
 
-/** Forma curta e copiável, a que o usuário vê: `203.0.113.5:51820#Xk29Ab3F`. */
-export function buildInviteCode({ host, port, token }: InviteInfo): string {
+/**
+ * Forma curta e copiável, a que o usuário vê: `203.0.113.5:51820#Xk29Ab3F` no
+ * caminho direto, `wss://algo.trycloudflare.com#Xk29Ab3F` quando é túnel.
+ */
+export function buildInviteCode({ host, port, token, secure }: InviteInfo): string {
+  if (secure) return `wss://${host}#${token}`;
   return `${host}:${port}#${token}`;
 }
 
 /** Forma URI, para quando o protocolo estiver registrado no Windows. */
-export function buildInviteUrl({ host, port, token }: InviteInfo): string {
+export function buildInviteUrl({ host, port, token, secure }: InviteInfo): string {
   const params = new URLSearchParams({ host, port: String(port), token });
+  if (secure) params.set('secure', '1');
   return `${APP_PROTOCOL}://join?${params.toString()}`;
+}
+
+/** Endereço WebSocket para onde o convidado disca. */
+export function inviteAddress({ host, port, secure }: InviteInfo): string {
+  // IPv6 literal precisa de colchetes na URL.
+  const needsBrackets = host.includes(':') && !host.startsWith('[');
+  const target = needsBrackets ? `[${host}]` : host;
+  return secure ? `wss://${target}` : `ws://${target}:${port}`;
+}
+
+/** Como mostrar o destino para a pessoa, sem o token. */
+export function inviteLabel({ host, port, secure }: InviteInfo): string {
+  return secure ? host : `${host}:${port}`;
 }
 
 /**
@@ -51,10 +78,11 @@ function parseInviteUrl(text: string): InviteInfo | null {
   try {
     const url = new URL(text);
     const host = url.searchParams.get('host');
-    const port = Number(url.searchParams.get('port'));
     const token = url.searchParams.get('token');
+    const secure = url.searchParams.get('secure') === '1';
+    const port = secure ? TLS_PORT : Number(url.searchParams.get('port'));
     if (!host || !token || !isValidPort(port)) return null;
-    return { host, port, token };
+    return secure ? { host, port, token, secure } : { host, port, token };
   } catch {
     return null;
   }
@@ -67,6 +95,19 @@ function parseInviteCode(text: string): InviteInfo | null {
   const address = text.slice(0, hashIndex);
   const token = text.slice(hashIndex + 1);
   if (!token) return null;
+
+  // Convite de túnel: `wss://nome.trycloudflare.com`, sem porta para separar.
+  const schemeMatch = /^wss?:\/\/(.+)$/i.exec(address.trim());
+  if (schemeMatch) {
+    const secure = address.trim().toLowerCase().startsWith('wss://');
+    const rest = schemeMatch[1].replace(/\/+$/, '');
+    const colonIndex = rest.lastIndexOf(':');
+    const hasPort = colonIndex !== -1 && /^\d+$/.test(rest.slice(colonIndex + 1));
+    const host = hasPort ? rest.slice(0, colonIndex) : rest;
+    const port = hasPort ? Number(rest.slice(colonIndex + 1)) : secure ? TLS_PORT : 80;
+    if (!host || !isValidPort(port)) return null;
+    return secure ? { host, port, token, secure } : { host, port, token };
+  }
 
   const colonIndex = address.lastIndexOf(':');
   if (colonIndex === -1) return null;

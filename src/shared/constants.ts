@@ -12,7 +12,20 @@ export const DEFAULT_PORT = 51820;
  * formato de qualquer mensagem: é o que troca um crash por um aviso claro
  * quando alguém está com o app desatualizado.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+
+/**
+ * Batida do coração no WebSocket. Um cabo arrancado ou um Wi-Fi que sumiu não
+ * fecha o socket: ele fica de pé, mudo, e os dois lados acham que a sala
+ * continua. O ping detecta isso em segundos em vez de minutos.
+ */
+export const HEARTBEAT_INTERVAL_MS = 5_000;
+
+/** Sem sinal de vida neste tempo, a conexão é dada como morta e a volta automática entra. */
+export const HEARTBEAT_TIMEOUT_MS = 15_000;
+
+/** Teto de servidores ICE personalizados: a lista inteira vai em toda negociação. */
+export const MAX_ICE_SERVERS = 8;
 
 /** Tamanho do token de sessão gerado a cada vez que o servidor sobe. */
 export const TOKEN_LENGTH = 8;

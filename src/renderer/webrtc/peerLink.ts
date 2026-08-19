@@ -35,7 +35,12 @@ export class PeerLink {
     private readonly polite: boolean,
     private readonly events: PeerLinkEvents,
   ) {
-    this.pc = new RTCPeerConnection({ iceServers: runtime.iceServers });
+    this.pc = new RTCPeerConnection({
+      iceServers: runtime.iceServers,
+      // `relay` esconde os IPs e prova que o TURN funciona, ao custo de passar
+      // toda a mídia por ele: é escolha da pessoa, nunca padrão.
+      iceTransportPolicy: runtime.forceRelay ? 'relay' : 'all',
+    });
 
     this.pc.onnegotiationneeded = async () => {
       try {

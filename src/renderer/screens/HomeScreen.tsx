@@ -8,6 +8,8 @@ import { Logo } from '../components/Logo';
 import { Dropdown } from '../components/Dropdown';
 import { Icon } from '../components/Icons';
 import { Connecting } from '../components/Connecting';
+import { ResumeCard } from '../components/ResumeCard';
+import { applyRoomFeatures } from '../webrtc/runtime';
 
 export function HomeScreen() {
   const startHost = useSession((s) => s.startHost);
@@ -71,7 +73,8 @@ export function HomeScreen() {
     if (!result.ok) return setError(result.error);
 
     rememberName(name.trim());
-    const { selfId, participants, ...connection } = result.data;
+    const { selfId, participants, features, ...connection } = result.data;
+    applyRoomFeatures(features);
     startHost(connection, selfId, participants);
   }
 
@@ -85,7 +88,8 @@ export function HomeScreen() {
     rememberName(name.trim());
     rememberServer(code.trim());
 
-    const { selfId, participants, screenSharerIds } = result.data;
+    const { selfId, participants, screenSharerIds, features } = result.data;
+    applyRoomFeatures(features);
     startGuest(selfId, participants, screenSharerIds);
   }
 
@@ -125,6 +129,8 @@ export function HomeScreen() {
           {lastError}
         </p>
       )}
+
+      <ResumeCard />
 
       <div className="z-10 mt-8 w-full max-w-md animate-fade-up [animation-delay:80ms]">
         {/* O nome vale para os dois caminhos, então fica fora das abas. */}

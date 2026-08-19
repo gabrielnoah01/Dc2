@@ -6,6 +6,7 @@ import { ChatPanel } from '../components/ChatPanel';
 import { VoiceControls } from '../components/VoiceControls';
 import { ScreenShareView, type ScreenTile } from '../components/ScreenShareView';
 import { InviteBar } from '../components/InviteBar';
+import { JoinRequests } from '../components/JoinRequests';
 import { useSettings } from '../state/settings';
 
 export function ServerScreen() {
@@ -71,6 +72,7 @@ export function ServerScreen() {
   return (
     <div className="flex h-full flex-col">
       {isHost && connection && <InviteBar connection={connection} />}
+      {isHost && <JoinRequests />}
 
       {(lastError || media.mediaError) && (
         <div className="flex items-center justify-between gap-4 bg-red-950/60 px-4 py-2 text-sm text-red-300">
@@ -111,6 +113,8 @@ export function ServerScreen() {
         isHost={isHost}
         participantCount={participants.length}
         sharerCount={tiles.length}
+        health={media.health}
+        participants={participants}
         listSources={media.listSources}
         onStartShare={media.startShare}
         onStopShare={media.stopShare}

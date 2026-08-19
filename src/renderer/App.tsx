@@ -4,11 +4,13 @@ import { useSession } from './state/store';
 import { HomeScreen } from './screens/HomeScreen';
 import { ServerScreen } from './screens/ServerScreen';
 import { UpdateBanner } from './components/UpdateBanner';
+import { UpdateScreen } from './components/UpdateScreen';
+import { ReconnectBanner } from './components/ReconnectBanner';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { Splash } from './components/Splash';
 import { TitleBar } from './components/TitleBar';
 import { initSettings, useSettings } from './state/settings';
-import { applyRuntimeSettings } from './webrtc/runtime';
+import { applyRuntimeSettings, applyRoomFeatures } from './webrtc/runtime';
 import { playCue } from './sounds';
 
 export function App() {
@@ -21,6 +23,9 @@ export function App() {
   const endSession = useSession((s) => s.endSession);
   const setError = useSession((s) => s.setError);
   const applyConnectionUpdate = useSession((s) => s.applyConnectionUpdate);
+  const applyReconnect = useSession((s) => s.applyReconnect);
+  const setJoinRequests = useSession((s) => s.setJoinRequests);
+  const setJoinPending = useSession((s) => s.setJoinPending);
   const [update, setUpdate] = useState<UpdateStatus>({ state: 'idle' });
   const receiveSettings = useSettings((s) => s.receive);
   const settingsOpen = useSettings((s) => s.open);
@@ -52,8 +57,21 @@ export function App() {
       }),
       window.only.onScreenShare(setScreenSharers),
       window.only.onDisconnected(endSession),
+      window.only.onReconnect((status) => {
+        const { notifications } = useSettings.getState().settings;
+        // A volta merece o mesmo aviso sonoro de quando alguém entra.
+        if (status.state === 'reconnected') {
+          // A sala pode ter voltado com outro combinado; a malha se refaz sozinha depois.
+          applyRoomFeatures(status.features);
+          if (notifications.soundOnJoin) playCue('join', notifications.volume);
+        }
+        applyReconnect(status);
+      }),
       window.only.onError(setError),
       window.only.onUpdate(setUpdate),
+      window.only.onJoinRequests(setJoinRequests),
+      // Enquanto o host não decide, a tela de conexão explica a demora.
+      window.only.onJoinPending(setJoinPending),
       window.only.onConnection(applyConnectionUpdate),
       window.only.onSettings(receiveSettings),
       window.only.onHistory(setHistory),
@@ -69,16 +87,22 @@ export function App() {
     endSession,
     setError,
     applyConnectionUpdate,
+    applyReconnect,
     receiveSettings,
     setHistory,
     setAttachmentData,
+    setJoinRequests,
+    setJoinPending,
   ]);
 
   return (
     <div className="flex h-full flex-col">
       <Splash ready={settingsLoaded} />
       <TitleBar />
+      {/* Fora da sala a atualização merece a tela toda; dentro dela, só o canto. */}
+      {role === null && <UpdateScreen status={update} />}
       <UpdateBanner status={update} />
+      <ReconnectBanner />
       <div className="min-h-0 flex-1">
         {role === null ? <HomeScreen /> : <ServerScreen />}
       </div>

@@ -5,6 +5,7 @@ import { peerSettings, type Settings } from '@shared/settings';
 import { VoiceManager } from './voiceManager';
 import { ScreenShareManager, type RemoteScreen } from './screenShareManager';
 import type { SharePresetId } from './quality';
+import { EMPTY_HEALTH, NetHealthProbe, SAMPLE_INTERVAL_MS, type NetHealth } from './netHealth';
 import { useSettings } from '../state/settings';
 
 interface SessionInfo {
@@ -23,6 +24,8 @@ interface MediaSession {
   /** Telas das outras pessoas — várias ao mesmo tempo é normal. */
   remoteScreens: RemoteScreen[];
   mediaError: string | null;
+  /** Como a rede está indo agora — atualiza sozinho enquanto a sessão vive. */
+  health: NetHealth;
   toggleMute(): void;
   toggleDeafen(): void;
   listSources(): Promise<ScreenSource[]>;
@@ -47,6 +50,7 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
   const [localScreen, setLocalScreen] = useState<MediaStream | null>(null);
   const [remoteScreens, setRemoteScreens] = useState<RemoteScreen[]>([]);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [health, setHealth] = useState<NetHealth>(EMPTY_HEALTH);
 
   const isHost = role === 'host';
   const hostId = isHost ? selfId : (participants.find((p) => p.isHost)?.id ?? null);
@@ -197,6 +201,31 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
     if (ok) await window.only.setScreenShare(true);
   }, []);
 
+  // Medição de rede: uma amostra a cada poucos segundos, só enquanto a sessão
+  // existe. `getStats()` é barato, mas não de graça — daí o intervalo largo.
+  useEffect(() => {
+    const probe = new NetHealthProbe();
+    let cancelled = false;
+
+    async function tick(): Promise<void> {
+      const voice = voiceRef.current;
+      const screen = screenRef.current;
+      if (!voice && !screen) return;
+      const next = await probe.sample([
+        ...(voice?.activeLinks() ?? []),
+        ...(screen?.activeLinks() ?? []),
+      ]);
+      if (!cancelled) setHealth(next);
+    }
+
+    const timer = window.setInterval(() => void tick(), SAMPLE_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      setHealth(EMPTY_HEALTH);
+    };
+  }, [selfId]);
+
   const stopShare = useCallback(() => {
     screenRef.current?.stopSharing();
     void window.only.setScreenShare(false);
@@ -212,6 +241,7 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
       localScreen,
       remoteScreens,
       mediaError,
+      health,
       toggleMute,
       toggleDeafen,
       listSources,
@@ -227,6 +257,7 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
       localScreen,
       remoteScreens,
       mediaError,
+      health,
       toggleMute,
       toggleDeafen,
       listSources,

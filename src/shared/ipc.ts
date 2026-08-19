@@ -1,4 +1,4 @@
-import type { Settings } from './settings';
+import type { ApprovalMode, LastSession, Settings } from './settings';
 import {
   ChatMessage,
   IceCandidate,
@@ -6,7 +6,21 @@ import {
   RtcChannel,
   SessionDescription,
   StreamOwner,
+  RoomFeatures,
 } from './protocol';
+
+export type { ApprovalMode };
+
+/**
+ * Alguém esperando o host abrir a porta. Só existe quando a sala está em
+ * aprovação manual.
+ */
+export interface JoinRequest {
+  /** Id da conexão — é o mesmo que vira id de participante se for aceito. */
+  id: string;
+  username: string;
+  requestedAt: number;
+}
 
 /** Papel da instância. `null` = ainda na tela inicial. */
 export type Role = 'host' | 'guest' | null;
@@ -16,6 +30,12 @@ export interface CreateServerOptions {
   port: number;
   /** Conversa a continuar. Ausente = começa uma nova. */
   conversationId?: string;
+  /**
+   * Reabrir a sala com o token antigo. Sem isso todo convite já distribuído
+   * morre junto com a queda do host — é o que permite os convidados voltarem
+   * sozinhos, sem ninguém recolar código.
+   */
+  token?: string;
 }
 
 export interface CreateServerResult {
@@ -33,6 +53,8 @@ export interface CreateServerResult {
   localIp: string;
   /** Como está a abertura da porta no roteador. */
   portStatus: PortStatus;
+  /** O que a sala combinou (malha, cifra, aprovação). */
+  features: RoomFeatures;
   portMappingDetail?: string;
   /** Operadora usa CGNAT: nem port-forward resolve, só rede local ou túnel. */
   behindCarrierNat?: boolean;
@@ -48,6 +70,8 @@ export interface JoinServerResult {
   selfId: string;
   participants: Participant[];
   screenSharerIds: string[];
+  /** O que a sala combinou: quem entra obedece o host, não a própria caixa. */
+  features: RoomFeatures;
 }
 
 export interface SignalPayload {
@@ -75,6 +99,10 @@ export const IPC = {
   createServer: 'session:create-server',
   joinServer: 'session:join-server',
   leave: 'session:leave',
+  reconnectNow: 'session:reconnect-now',
+  cancelReconnect: 'session:reconnect-cancel',
+  getLastSession: 'session:last',
+  forgetLastSession: 'session:last-forget',
   sendChat: 'chat:send',
   sendSignal: 'rtc:signal',
   setScreenShare: 'screenshare:set',
@@ -90,6 +118,8 @@ export const IPC = {
   updateSettings: 'settings:update',
   resetSettings: 'settings:reset',
   testShortcut: 'settings:test-shortcut',
+  decideJoin: 'session:decide-join',
+  listJoinRequests: 'session:join-requests',
 } as const;
 
 export const IPC_EVENT = {
@@ -98,6 +128,7 @@ export const IPC_EVENT = {
   signal: 'event:signal',
   screenShare: 'event:screenshare',
   disconnected: 'event:disconnected',
+  reconnect: 'event:reconnect',
   error: 'event:error',
   update: 'event:update',
   connection: 'event:connection',
@@ -105,7 +136,40 @@ export const IPC_EVENT = {
   attachment: 'event:attachment',
   settings: 'event:settings',
   shortcut: 'event:shortcut',
+  joinRequests: 'event:join-requests',
+  joinPending: 'event:join-pending',
 } as const;
+
+/**
+ * Andamento da volta automática depois de uma queda. Enquanto isso a tela da
+ * sala continua de pé: quem estava conversando não perde o histórico nem a
+ * lista de quem estava lá, e a volta é silenciosa quando dá certo de primeira.
+ */
+export type ReconnectStatus =
+  | { state: 'idle' }
+  | {
+      state: 'retrying';
+      /** Tentativa atual, contando da primeira. */
+      attempt: number;
+      maxAttempts: number;
+      /** Quando a próxima tentativa dispara (epoch ms) — para o contador na tela. */
+      nextAttemptAt: number;
+      /** Motivo da queda, em português de gente. */
+      reason: string;
+      label: string;
+    }
+  | { state: 'connecting'; attempt: number; maxAttempts: number; reason: string; label: string }
+  | {
+      state: 'reconnected';
+      role: Exclude<Role, null>;
+      selfId: string;
+      participants: Participant[];
+      screenSharerIds: string[];
+      /** A sala pode ter voltado com outro combinado: malha, cifra, aprovação. */
+      features: RoomFeatures;
+    }
+  /** Desistimos (ou o usuário cancelou): agora sim a sessão acabou. */
+  | { state: 'failed'; reason: string; label: string };
 
 /** Estado da atualização, mostrado numa faixa no topo do app. */
 export type UpdateStatus =
@@ -138,6 +202,13 @@ export interface OnlyApi {
   createServer(options: CreateServerOptions): Promise<ActionResult<CreateServerResult>>;
   joinServer(options: JoinServerOptions): Promise<ActionResult<JoinServerResult>>;
   leave(): Promise<void>;
+  /** Tenta a volta agora, sem esperar o cronômetro (ou depois de desistir). */
+  reconnectNow(): Promise<ActionResult<null>>;
+  /** Para de tentar: a pessoa prefere voltar para a tela inicial. */
+  cancelReconnect(): Promise<void>;
+  /** A última sala, para oferecer a volta assim que o app abre. */
+  getLastSession(): Promise<LastSession | null>;
+  forgetLastSession(): Promise<void>;
   sendChat(payload: ChatPayload): Promise<void>;
   /** Pede a imagem cheia de uma mensagem antiga do histórico. */
   requestAttachment(messageId: string): Promise<void>;
@@ -160,6 +231,11 @@ export interface OnlyApi {
   /** Confere se um atalho pode ser registrado; devolve o conflito, se houver. */
   testShortcut(accelerator: string): Promise<{ ok: boolean; detail?: string }>;
 
+  /** Resposta do host a quem bateu na porta. `false` = o pedido já sumiu. */
+  decideJoin(id: string, accept: boolean): Promise<boolean>;
+  /** Fila atual, para a tela do host já abrir com o que está pendente. */
+  listJoinRequests(): Promise<JoinRequest[]>;
+
   onParticipants(handler: (participants: Participant[]) => void): () => void;
   onChat(handler: (message: ChatMessage) => void): () => void;
   onHistory(handler: (messages: ChatMessage[]) => void): () => void;
@@ -167,10 +243,15 @@ export interface OnlyApi {
   onSignal(handler: (signal: IncomingSignal) => void): () => void;
   onScreenShare(handler: (sharerIds: string[]) => void): () => void;
   onDisconnected(handler: (reason: string) => void): () => void;
+  onReconnect(handler: (status: ReconnectStatus) => void): () => void;
   onError(handler: (detail: string) => void): () => void;
   onUpdate(handler: (status: UpdateStatus) => void): () => void;
   onSettings(handler: (settings: Settings) => void): () => void;
   onShortcut(handler: (action: ShortcutAction) => void): () => void;
+  /** Só o host recebe: quem está esperando aprovação neste instante. */
+  onJoinRequests(handler: (requests: JoinRequest[]) => void): () => void;
+  /** Só o convidado recebe: o host precisa aprovar, aguarde. */
+  onJoinPending(handler: (reason: string) => void): () => void;
   /** Dados de rede que chegam depois da sala abrir (UPnP, IP público). */
   onConnection(handler: (info: ConnectionUpdate) => void): () => void;
 }
@@ -218,4 +299,12 @@ export interface ConnectionUpdate {
  * "não consegui abrir a porta" enquanto a tentativa ainda está em curso faz o
  * usuário desistir de algo que ia funcionar.
  */
-export type PortStatus = 'checking' | 'mapped' | 'closed';
+/**
+ * Como o mundo de fora chega até a sala.
+ *  - `checking`: ainda falando com o roteador.
+ *  - `mapped`:   porta aberta, caminho direto.
+ *  - `tunneling`: sem porta; preparando a ponte (pode estar baixando).
+ *  - `tunnel`:   ponte de pé, o convite de internet é o endereço dela.
+ *  - `closed`:   sem porta e sem ponte — só rede local.
+ */
+export type PortStatus = 'checking' | 'mapped' | 'tunneling' | 'tunnel' | 'closed';

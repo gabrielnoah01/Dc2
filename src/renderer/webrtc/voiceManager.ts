@@ -3,6 +3,7 @@ import type { StreamOwner } from '@shared/protocol';
 import type { AudioSettings } from '@shared/settings';
 import { PeerLink } from './peerLink';
 import { VOICE_SENDER } from './quality';
+import { runtime } from './runtime';
 
 /** Como uma pessoa deve ser ouvida por mim — decisão local, ninguém mais vê. */
 export interface PeerAudio {
@@ -199,15 +200,14 @@ export class VoiceManager {
   // Conexões
   // -------------------------------------------------------------------------
 
+  /** Conexões vivas, para quem quer medir a rede sem mexer na mídia. */
+  activeLinks(): PeerLink[] {
+    return [...this.links.values()];
+  }
+
   syncPeers(peerIds: string[]): void {
     if (this.stopped) return;
-    const wanted = new Set(
-      this.options.isHost
-        ? peerIds.filter((id) => id !== this.options.selfId)
-        : this.options.hostId
-          ? [this.options.hostId]
-          : [],
-    );
+    const wanted = new Set(this.wantedPeers(peerIds));
 
     for (const peerId of wanted) {
       if (!this.links.has(peerId)) this.openLink(peerId);
@@ -268,9 +268,35 @@ export class VoiceManager {
     this.audioContext = null;
   }
 
+  /**
+   * Em estrela o convidado só conhece o host; em malha ele fala com a sala toda.
+   * O host sempre enxerga todo mundo - é ele quem serve de campainha.
+   */
+  private wantedPeers(peerIds: string[]): string[] {
+    if (this.options.isHost || runtime.mesh) {
+      return peerIds.filter((id) => id !== this.options.selfId);
+    }
+    return this.options.hostId ? [this.options.hostId] : [];
+  }
+
+  /**
+   * Só um lado pode ceder numa colisão de ofertas. Com o host a regra é fixa;
+   * entre convidados o id decide, para os dois chegarem na mesma conclusão.
+   */
+  private politeWith(peerId: string): boolean {
+    if (this.options.isHost) return false;
+    if (peerId === this.options.hostId) return true;
+    return this.options.selfId < peerId;
+  }
+
+  /** Repasse do host só existe na estrela: em malha a faixa já chega direto. */
+  private get relaying(): boolean {
+    return this.options.isHost && !runtime.mesh;
+  }
+
   private openLink(peerId: string): PeerLink {
     // Host é o lado "impolite" da negociação: em colisão, a oferta dele vence.
-    const link = new PeerLink(peerId, 'voice', !this.options.isHost, {
+    const link = new PeerLink(peerId, 'voice', this.politeWith(peerId), {
       onTrack: (track, stream) => this.handleRemoteTrack(peerId, track, stream),
       onTrackEnded: (track) => this.handleTrackEnded(peerId, track),
     });
@@ -287,7 +313,7 @@ export class VoiceManager {
     }
 
     // Host abre a conexão já repassando o áudio de quem entrou antes.
-    if (this.options.isHost) {
+    if (this.relaying) {
       for (const [originId, tracks] of this.remoteTracks) {
         if (originId === peerId) continue;
         for (const { track, stream } of tracks) this.forward(peerId, link, track, stream);
@@ -321,9 +347,11 @@ export class VoiceManager {
     list.push({ track, stream, from: peerId });
     this.remoteTracks.set(peerId, list);
 
-    if (this.options.isHost) {
+    if (this.options.isHost || runtime.mesh) {
       // Numa conexão direta a faixa é de quem está do outro lado.
       this.streamOwner.set(stream.id, peerId);
+    }
+    if (this.relaying) {
       for (const [otherId, link] of this.links) {
         if (otherId === peerId) continue;
         this.forward(otherId, link, track, stream);
@@ -382,7 +410,8 @@ export class VoiceManager {
    * renegociação do WebRTC está acontecendo.
    */
   private broadcastStreamMap(): void {
-    if (!this.options.isHost || this.stopped) return;
+    // Em malha ninguém precisa do mapa: cada faixa chega pela conexão do dono.
+    if (!this.options.isHost || runtime.mesh || this.stopped) return;
     if (this.streamMapTimer !== null) return;
 
     this.streamMapTimer = window.setTimeout(() => {
@@ -462,7 +491,9 @@ export class VoiceManager {
   }
 
   private ownerOfStream(stream: MediaStream, peerId: string): string | null {
-    return this.options.isHost ? peerId : (this.streamOwner.get(stream.id) ?? null);
+    // Em malha (e no host) toda faixa chega pela conexão do próprio dono.
+    if (this.options.isHost || runtime.mesh) return peerId;
+    return this.streamOwner.get(stream.id) ?? null;
   }
 
   private ownerOfTrack(trackId: string): string | null {

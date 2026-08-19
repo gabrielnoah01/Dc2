@@ -16,12 +16,14 @@ import {
   pruneMessages,
   recentMessages,
 } from '../chatStore';
+import { notifyChat } from '../notify';
 import { registerShortcuts } from '../shortcuts';
 import { globalShortcut } from 'electron';
 import type { SettingsPatch } from '../../shared/ipc';
 import { HostServer } from '../network/hostServer';
 import { GuestClient } from '../network/guestClient';
 import { mapPort, unmapPort, type PortMappingResult } from '../network/upnp';
+import { startTunnel, stopTunnel } from '../network/tunnel';
 import { resolveLocalIp, resolvePublicIp } from '../network/publicIp';
 import {
   ActionResult,
@@ -33,12 +35,15 @@ import {
   IncomingSignal,
   JoinServerOptions,
   JoinServerResult,
+  ReconnectStatus,
   Role,
   ScreenSource,
   SignalPayload,
 } from '../../shared/ipc';
-import { ChatMessage, Participant, ServerMessage } from '../../shared/protocol';
+import type { LastSession } from '../../shared/settings';
+import { ChatMessage, Participant, RoomFeatures, ServerMessage } from '../../shared/protocol';
 import {
+  InviteInfo,
   buildInviteCode,
   buildInviteUrl,
   generateToken,
@@ -52,6 +57,266 @@ interface Session {
 }
 
 let session: Session | null = null;
+
+// ---------------------------------------------------------------------------
+// Volta automática depois de uma queda
+// ---------------------------------------------------------------------------
+
+/**
+ * O que basta para refazer exatamente a mesma sala. Os dois lados se ajudam: o
+ * host reabre com o *mesmo token e a mesma porta*, então o convite que os
+ * convidados já têm continua valendo e a tentativa silenciosa deles casa com a
+ * volta dele — ninguém precisa recolher código nem combinar nada por fora.
+ */
+type ReconnectPlan =
+  | {
+      role: 'host';
+      label: string;
+      username: string;
+      port: number;
+      token: string;
+      conversationId?: string;
+    }
+  | { role: 'guest'; label: string; username: string; invite: string };
+
+/**
+ * Espera crescente: as primeiras tentativas são quase imediatas (o caso comum é
+ * um tropeço de Wi-Fi de dois segundos) e depois espaçam, dando tempo do host
+ * reabrir o app sem que a gente desista antes dele voltar.
+ */
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 20_000, 30_000, 30_000];
+const MAX_ATTEMPTS = RETRY_DELAYS_MS.length;
+
+/** Quanto tempo uma sala caída ainda vale um "quer voltar?" na tela inicial. */
+const LAST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+let plan: ReconnectPlan | null = null;
+let retryTimer: NodeJS.Timeout | null = null;
+let attempt = 0;
+let retryReason = '';
+let retrying = false;
+
+/**
+ * Cada socket carrega o número da sessão que o criou: um cliente antigo que
+ * fecha tarde não pode derrubar a sessão que já voltou.
+ */
+let generation = 0;
+
+function emitReconnect(status: ReconnectStatus): void {
+  broadcastToRenderer(IPC_EVENT.reconnect, status);
+}
+
+/** Grava a sala no disco — é o que a tela inicial lê para oferecer a volta. */
+function rememberSession(dropped: boolean, reason?: string): void {
+  if (!plan) return;
+  const last: LastSession = {
+    role: plan.role,
+    label: plan.label,
+    invite: plan.role === 'guest' ? plan.invite : '',
+    username: plan.username,
+    conversationId: plan.role === 'host' ? plan.conversationId : undefined,
+    port: plan.role === 'host' ? plan.port : undefined,
+    token: plan.role === 'host' ? plan.token : undefined,
+    endedAt: Date.now(),
+    dropped,
+    reason,
+  };
+  updateSettings({ app: { lastSession: last } });
+}
+
+function planFromLastSession(last: LastSession): ReconnectPlan | null {
+  if (last.role === 'guest') {
+    if (!last.invite) return null;
+    return { role: 'guest', label: last.label, username: last.username, invite: last.invite };
+  }
+  if (!last.port || !last.token) return null;
+  return {
+    role: 'host',
+    label: last.label,
+    username: last.username,
+    port: last.port,
+    token: last.token,
+    conversationId: last.conversationId,
+  };
+}
+
+function clearRetryTimer(): void {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+}
+
+/** Desiste da volta sem apagar o rastro: usado ao abrir uma sala nova. */
+function forgetPlan(): void {
+  clearRetryTimer();
+  plan = null;
+  attempt = 0;
+  retrying = false;
+  retryReason = '';
+}
+
+/**
+ * O socket caiu sem ninguém ter pedido. A tela da sala continua de pé: quem
+ * estava conversando não perde o histórico nem a lista de quem estava lá.
+ */
+function handleDrop(reason: string, from: number): void {
+  if (from !== generation) return; // eco de uma sessão antiga
+  session = null;
+
+  const autoReconnect = loadSettings().app.autoReconnect;
+  rememberSession(true, reason);
+
+  if (!plan || !autoReconnect) {
+    // Sem volta automática a sessão acabou aqui — mas a sala fica salva para o
+    // convite da tela inicial.
+    plan = null;
+    broadcastToRenderer(IPC_EVENT.disconnected, reason);
+    return;
+  }
+
+  attempt = 0;
+  retryReason = reason;
+  scheduleRetry();
+}
+
+function scheduleRetry(): void {
+  if (!plan) return;
+  const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+  clearRetryTimer();
+  emitReconnect({
+    state: 'retrying',
+    attempt: attempt + 1,
+    maxAttempts: MAX_ATTEMPTS,
+    nextAttemptAt: Date.now() + delay,
+    reason: retryReason,
+    label: plan.label,
+  });
+  retryTimer = setTimeout(() => void runRetry(), delay);
+}
+
+/** Uma tentativa. Devolve `true` quando a sala voltou. */
+async function runRetry(): Promise<boolean> {
+  if (!plan || retrying) return false;
+  clearRetryTimer();
+  retrying = true;
+  attempt += 1;
+
+  const current = plan;
+  emitReconnect({
+    state: 'connecting',
+    attempt,
+    maxAttempts: MAX_ATTEMPTS,
+    reason: retryReason,
+    label: current.label,
+  });
+
+  try {
+    const result = await (current.role === 'host'
+      ? startHostSession(
+          {
+            username: current.username,
+            port: current.port,
+            conversationId: current.conversationId,
+          },
+          current.token,
+        )
+      : rejoin(current.invite, current.username));
+
+    retrying = false;
+
+    if (result.ok) {
+      rememberSession(true, retryReason); // ainda "em aberto": só o leave limpa
+      emitReconnect({
+        state: 'reconnected',
+        role: current.role,
+        selfId: result.data.selfId,
+        participants: result.data.participants,
+        screenSharerIds: 'screenSharerIds' in result.data ? result.data.screenSharerIds : [],
+        features: result.data.features,
+      });
+      return true;
+    }
+    retryReason = result.error;
+  } catch (error) {
+    retrying = false;
+    retryReason = error instanceof Error ? error.message : String(error);
+  }
+
+  if (attempt >= MAX_ATTEMPTS) {
+    giveUp(retryReason);
+    return false;
+  }
+  scheduleRetry();
+  return false;
+}
+
+function giveUp(reason: string): void {
+  const label = plan?.label ?? '';
+  rememberSession(true, reason);
+  forgetPlan();
+  emitReconnect({ state: 'failed', reason, label });
+  broadcastToRenderer(IPC_EVENT.disconnected, reason);
+}
+
+/**
+ * Tenta a volta agora: vale tanto para o botão "tentar de novo" do aviso na
+ * sala quanto para o convite da tela inicial depois de o app ter fechado.
+ */
+async function reconnectNow(): Promise<ActionResult<null>> {
+  if (!plan) {
+    const last = loadSettings().app.lastSession;
+    const rebuilt = last ? planFromLastSession(last) : null;
+    if (!rebuilt) return { ok: false, error: 'não há sala recente para voltar' };
+    plan = rebuilt;
+    attempt = 0;
+    retryReason = last?.reason ?? '';
+    await disposeSession();
+  }
+
+  clearRetryTimer();
+  // Um clique não gasta tentativa: quem está olhando a tela merece paciência.
+  if (attempt > 0) attempt -= 1;
+
+  const ok = await runRetry();
+  return ok ? { ok: true, data: null } : { ok: false, error: retryReason };
+}
+
+/** O usuário preferiu voltar para a tela inicial. */
+async function cancelReconnect(): Promise<void> {
+  if (!plan) return;
+  const reason = retryReason || 'você cancelou a volta';
+  // Desistir é uma saída consciente: nada de insistir na próxima abertura.
+  rememberSession(false, reason);
+  const label = plan.label;
+  forgetPlan();
+  emitReconnect({ state: 'failed', reason, label });
+}
+
+function getLastSession(): LastSession | null {
+  const last = loadSettings().app.lastSession;
+  if (!last) return null;
+  // Uma sala de ontem não interessa mais a ninguém.
+  if (Date.now() - last.endedAt > LAST_SESSION_TTL_MS) return null;
+  return last;
+}
+
+function forgetLastSession(): void {
+  updateSettings({ app: { lastSession: null } });
+}
+
+/** Saída pedida pela pessoa: encerra de vez, sem volta automática. */
+async function leaveSession(): Promise<void> {
+  clearRetryTimer();
+  rememberSession(false);
+  forgetPlan();
+  await disposeSession();
+}
+
+/** Reentra pelo código guardado — o mesmo que o host mantém válido. */
+function rejoin(invite: string, username: string): Promise<ActionResult<JoinServerResult>> {
+  const parsed = parseInvite(invite);
+  if (!parsed) return Promise.resolve({ ok: false, error: 'o convite guardado não vale mais' });
+  return startGuestSession(parsed, username);
+}
 
 function broadcastToRenderer(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -72,7 +337,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.joinServer, (_event, options: JoinServerOptions) =>
     joinServer(options),
   );
-  ipcMain.handle(IPC.leave, () => disposeSession());
+  ipcMain.handle(IPC.leave, () => leaveSession());
+  ipcMain.handle(IPC.reconnectNow, () => reconnectNow());
+  ipcMain.handle(IPC.cancelReconnect, () => cancelReconnect());
+  ipcMain.handle(IPC.getLastSession, () => getLastSession());
+  ipcMain.handle(IPC.listJoinRequests, () =>
+    session?.role === 'host' ? (session.host?.listJoinRequests() ?? []) : [],
+  );
+  ipcMain.handle(IPC.decideJoin, (_event, id: string, accept: boolean) =>
+    session?.role === 'host' ? (session.host?.decideJoin(id, accept) ?? false) : false,
+  );
+  ipcMain.handle(IPC.forgetLastSession, () => forgetLastSession());
   ipcMain.handle(IPC.sendChat, (_event, payload: ChatPayload) => sendChat(payload));
   ipcMain.handle(IPC.sendSignal, (_event, payload: SignalPayload) => sendSignal(payload));
   ipcMain.handle(IPC.setScreenShare, (_event, active: boolean) => setScreenShare(active));
@@ -144,9 +419,24 @@ function testShortcut(accelerator: string): { ok: boolean; detail?: string } {
 async function createServer(
   options: CreateServerOptions,
 ): Promise<ActionResult<CreateServerResult>> {
+  // Abrir uma sala nova desiste da volta para a antiga.
+  forgetPlan();
   await disposeSession();
 
-  const token = generateToken();
+  const result = await startHostSession(options, generateToken());
+  if (result.ok) rememberSession(true, 'o app fechou no meio da conversa');
+  return result;
+}
+
+/**
+ * Sobe o servidor. O token vem de fora porque, na volta depois de uma queda,
+ * ele precisa ser o *mesmo de antes*: é isso que mantém válido o convite que os
+ * convidados já têm na mão.
+ */
+async function startHostSession(
+  options: CreateServerOptions,
+  token: string,
+): Promise<ActionResult<CreateServerResult>> {
   const chat = loadSettings().chat;
 
   // Abre (ou cria) a conversa antes do servidor subir: quem entrar já encontra
@@ -161,16 +451,20 @@ async function createServer(
   const host = new HostServer(token, options.username, {
     onParticipants: (participants: Participant[]) =>
       broadcastToRenderer(IPC_EVENT.participants, participants),
-    onChat: (message: ChatMessage) => broadcastToRenderer(IPC_EVENT.chat, message),
+    onChat: (message: ChatMessage) => {
+      broadcastToRenderer(IPC_EVENT.chat, message);
+      notifyChat(message, host.hostId);
+    },
     onSignal: (message) => broadcastToRenderer(IPC_EVENT.signal, toIncomingSignal(message)),
     onScreenShare: (sharerIds) => broadcastToRenderer(IPC_EVENT.screenShare, sharerIds),
+    onJoinRequests: (requests) => broadcastToRenderer(IPC_EVENT.joinRequests, requests),
     onError: (detail) => broadcastToRenderer(IPC_EVENT.error, detail),
   }, {
     // Com a gravação desligada, a sala funciona igual — só não deixa rastro.
     persist: (message) => (loadSettings().chat.saveHistory ? appendMessage(message) : message),
     history: () => recentMessages(loadSettings().chat.historyOnJoin),
     attachment: (messageId) => attachmentDataUrl(messageId),
-  });
+  }, () => loadSettings().security.approval, currentFeatures);
 
   try {
     await host.start(options.port);
@@ -179,14 +473,23 @@ async function createServer(
   }
 
   session = { role: 'host', host };
+  generation += 1;
+
+  const localIp = resolveLocalIp() ?? '127.0.0.1';
+  plan = {
+    role: 'host',
+    label: `${localIp}:${options.port}`,
+    username: options.username,
+    port: options.port,
+    token,
+    conversationId: currentConversationId() ?? options.conversationId,
+  };
 
   // O host também vê a conversa que escolheu continuar.
   const history = recentMessages(chat.historyOnJoin);
   if (history.length > 0) {
     setTimeout(() => broadcastToRenderer(IPC_EVENT.history, history), 0);
   }
-
-  const localIp = resolveLocalIp() ?? '127.0.0.1';
 
   // A sala abre na hora com o link de rede local, que já basta para o caso mais
   // comum. UPnP e IP público levam segundos e chegam depois, por evento — antes
@@ -207,6 +510,7 @@ async function createServer(
       localIp,
       // Ainda estamos falando com o roteador; a resposta chega por evento.
       portStatus: 'checking',
+      features: currentFeatures(),
     },
   };
 }
@@ -230,15 +534,99 @@ async function resolveNetworkInBackground(port: number, token: string): Promise<
   // Se o serviço externo falhar, o roteador ainda sabe o IP de saída.
   const externalIp = publicIp ?? mapping.routerExternalIp ?? null;
 
-  const update: ConnectionUpdate = {
-    inviteCode: externalIp ? buildInviteCode({ host: externalIp, port, token }) : null,
-    inviteUrl: externalIp ? buildInviteUrl({ host: externalIp, port, token }) : null,
+  /*
+   * "Mapeado" não quer dizer "alcançável". Dois casos comuns de roteador que
+   * responde "abri" e ninguém entra:
+   *  - CGNAT: o IP que o roteador anuncia é privado (a operadora está no meio).
+   *  - NAT duplo: o roteador com quem falamos não é o que tem o IP público —
+   *    o IP que o mundo vê é outro, então a porta foi aberta no lugar errado.
+   * Nos dois o convite direto nasce quebrado; melhor descobrir agora, sozinho,
+   * do que o amigo do outro lado descobrir errando a entrada.
+   */
+  const doubleNat =
+    mapping.status === 'mapped' &&
+    !!publicIp &&
+    !!mapping.routerExternalIp &&
+    publicIp !== mapping.routerExternalIp;
+  const directWorks = mapping.status === 'mapped' && !mapping.behindCarrierNat && !doubleNat;
+
+  const detail = doubleNat
+    ? `porta aberta no roteador ${mapping.routerExternalIp}, mas a internet chega por ${publicIp} — há outro roteador na frente`
+    : mapping.detail;
+
+  broadcastToRenderer(IPC_EVENT.connection, {
+    inviteCode: directWorks && externalIp ? buildInviteCode({ host: externalIp, port, token }) : null,
+    inviteUrl: directWorks && externalIp ? buildInviteUrl({ host: externalIp, port, token }) : null,
     publicIp: externalIp,
-    portStatus: mapping.status === 'mapped' ? 'mapped' : 'closed',
-    portMappingDetail: mapping.detail,
+    portStatus: directWorks ? 'mapped' : network.useTunnel ? 'tunneling' : 'closed',
+    portMappingDetail: detail,
     behindCarrierNat: mapping.behindCarrierNat,
-  };
-  broadcastToRenderer(IPC_EVENT.connection, update);
+  });
+
+  if (directWorks || !network.useTunnel) return;
+  await openTunnelFallback(port, token, externalIp, mapping.behindCarrierNat);
+}
+
+/**
+ * Plano B: quando a porta não serve, sobe a ponte e troca o convite de internet
+ * pelo endereço dela. A sala nunca cai por causa disto — quem já está dentro
+ * pelo Wi-Fi continua conversando enquanto o túnel sobe.
+ */
+async function openTunnelFallback(
+  port: number,
+  token: string,
+  publicIp: string | null,
+  behindCarrierNat: boolean | undefined,
+): Promise<void> {
+  // Retrato do momento: se a pessoa fechar a sala e abrir outra enquanto a
+  // ponte sobe, a resposta atrasada não pode contaminar a sala nova.
+  const mine = generation;
+  const stillMine = () => session?.role === 'host' && generation === mine;
+
+  const hostname = await startTunnel(port, {
+    onStage: (stage) => {
+      if (!stillMine()) return;
+      if (stage.stage === 'downloading') {
+        broadcastToRenderer(IPC_EVENT.connection, {
+          portStatus: 'tunneling',
+          portMappingDetail: `preparando a ponte de internet (${stage.percent}%)`,
+        });
+      } else if (stage.stage === 'starting') {
+        broadcastToRenderer(IPC_EVENT.connection, {
+          portStatus: 'tunneling',
+          portMappingDetail: 'abrindo a ponte de internet',
+        });
+      }
+    },
+  });
+
+  // A sala pode ter fechado (ou virado outra) enquanto a ponte subia.
+  if (!stillMine()) {
+    if (hostname) await stopTunnel();
+    return;
+  }
+
+  if (!hostname) {
+    broadcastToRenderer(IPC_EVENT.connection, {
+      inviteCode: null,
+      inviteUrl: null,
+      portStatus: 'closed',
+      portMappingDetail: behindCarrierNat
+        ? 'sua operadora usa CGNAT e a ponte de internet não subiu — pela internet, só com a porta liberada por outro caminho'
+        : 'não consegui abrir a porta nem subir a ponte de internet',
+      behindCarrierNat,
+    });
+    return;
+  }
+
+  broadcastToRenderer(IPC_EVENT.connection, {
+    inviteCode: buildInviteCode({ host: hostname, port, token, secure: true }),
+    inviteUrl: buildInviteUrl({ host: hostname, port, token, secure: true }),
+    publicIp,
+    portStatus: 'tunnel',
+    portMappingDetail: `entrando pela ponte ${hostname} — não precisou mexer no roteador`,
+    behindCarrierNat,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +636,7 @@ async function resolveNetworkInBackground(port: number, token: string): Promise<
 async function joinServer(
   options: JoinServerOptions,
 ): Promise<ActionResult<JoinServerResult>> {
+  forgetPlan();
   await disposeSession();
 
   const invite = parseInvite(options.invite);
@@ -255,11 +644,31 @@ async function joinServer(
     return { ok: false, error: 'link de convite inválido — cole o código completo' };
   }
 
+  const result = await startGuestSession(invite, options.username);
+  if (result.ok) {
+    plan = {
+      role: 'guest',
+      label: `${invite.host}:${invite.port}`,
+      username: options.username,
+      invite: options.invite.trim(),
+    };
+    rememberSession(true, 'o app fechou no meio da conversa');
+  }
+  return result;
+}
+
+async function startGuestSession(
+  invite: InviteInfo,
+  username: string,
+): Promise<ActionResult<JoinServerResult>> {
+  const mine = generation + 1;
+
   let accepted: Extract<ServerMessage, { type: 'join:accepted' }> | null = null;
   // O convidado acompanha quem está compartilhando; o host manda só as mudanças.
   const sharers = new Set<string>();
 
   const guest = new GuestClient({
+    onPending: (reason) => broadcastToRenderer(IPC_EVENT.joinPending, reason),
     onMessage: (message) => {
       switch (message.type) {
         case 'join:accepted':
@@ -272,6 +681,7 @@ async function joinServer(
           break;
         case 'chat:broadcast':
           broadcastToRenderer(IPC_EVENT.chat, message.message);
+          notifyChat(message.message, accepted?.selfId ?? null);
           break;
         case 'chat:history':
           broadcastToRenderer(IPC_EVENT.history, message.messages);
@@ -298,26 +708,27 @@ async function joinServer(
           break;
       }
     },
-    onClosed: (reason) => {
-      session = null;
-      broadcastToRenderer(IPC_EVENT.disconnected, reason);
-    },
+    onClosed: (reason) => handleDrop(reason, mine),
     onError: (detail) => broadcastToRenderer(IPC_EVENT.error, detail),
   });
 
   try {
-    await guest.connect(invite.host, invite.port, invite.token, options.username);
+    await guest.connect(invite, username);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 
   session = { role: 'guest', guest };
+  generation = mine;
 
   if (!accepted) {
     return { ok: false, error: 'host não confirmou a entrada' };
   }
 
-  const { selfId, participants, screenSharerIds } = accepted;
+  const joined: Extract<ServerMessage, { type: 'join:accepted' }> = accepted;
+  const { selfId, participants, screenSharerIds } = joined;
+  // Host de versão antiga não anuncia nada: sala em estrela, sem cifra.
+  const features: RoomFeatures = joined.features ?? { mesh: false, approval: false };
   return {
     ok: true,
     // Blindagem: um campo faltando aqui vira exceção no React e tela preta.
@@ -325,6 +736,7 @@ async function joinServer(
       selfId,
       participants: participants ?? [],
       screenSharerIds: screenSharerIds ?? [],
+      features,
     },
   };
 }
@@ -338,6 +750,18 @@ function sendChat(payload: ChatPayload): void {
   const { text, attachment } = normalizeChatPayload(payload);
   if (session.role === 'host') session.host?.sendChatFromHost(text, attachment);
   else session.guest?.send({ type: 'chat:send', text, attachment });
+}
+
+/**
+ * O que a sala combina com quem entra. O host lê das próprias preferências; o
+ * convidado obedece o que veio no aceite - decidir sozinho seria falar sozinho.
+ */
+function currentFeatures(): RoomFeatures {
+  const settings = loadSettings();
+  return {
+    mesh: settings.network.mesh,
+    approval: settings.security.approval === 'manual',
+  };
 }
 
 /**
@@ -429,7 +853,7 @@ export async function disposeSession(): Promise<void> {
     await current.host?.stop();
     stopRetentionTimer();
     closeConversation();
-    await unmapPort();
+    await Promise.all([unmapPort(), stopTunnel()]);
   } else {
     current.guest?.disconnect();
   }

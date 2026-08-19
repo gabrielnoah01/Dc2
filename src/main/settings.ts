@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DEFAULT_SETTINGS, mergeSettings, type Settings } from '../shared/settings';
+import { DEFAULT_SETTINGS, mergeSettings, sanitizeIceServers, type Settings } from '../shared/settings';
 
 /**
  * Persistência das preferências, em JSON dentro de `userData`.
@@ -39,7 +39,16 @@ export function updateSettings(patch: DeepPartial<Settings>): Settings {
     shortcuts: { ...current.shortcuts, ...(patch.shortcuts ?? {}) },
     screen: { ...current.screen, ...(patch.screen ?? {}) },
     notifications: { ...current.notifications, ...(patch.notifications ?? {}) },
-    network: { ...current.network, ...(patch.network ?? {}) },
+    network: {
+      ...current.network,
+      ...(patch.network ?? {}),
+      // A lista de ICE vai inteira ou não vai: mesclar item a item faria um
+      // servidor apagado voltar do nada na próxima gravação.
+      iceServers: patch.network?.iceServers
+        ? sanitizeIceServers(patch.network.iceServers)
+        : current.network.iceServers,
+    },
+    security: { ...current.security, ...(patch.security ?? {}) },
     app: { ...current.app, ...(patch.app ?? {}) },
     // `peers` é substituído inteiro quando vem: é assim que dá para remover uma
     // pessoa da lista em vez de só sobrescrever.

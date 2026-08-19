@@ -21,11 +21,10 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
     window.setTimeout(() => setCopied((current) => (current === kind ? null : current)), 1600);
   }
 
-  const checking = connection.portStatus === 'checking';
+  // Vale para os dois caminhos de fora: porta aberta no roteador ou ponte.
   const internetWorks =
     connection.inviteCode !== null &&
-    connection.portStatus === 'mapped' &&
-    !connection.behindCarrierNat;
+    (connection.portStatus === 'mapped' || connection.portStatus === 'tunnel');
 
   return (
     <header className="flex animate-slide-down flex-col gap-2 border-b border-ink-700/70 bg-ink-800/70 px-4 py-2 text-sm backdrop-blur-sm">
@@ -65,14 +64,28 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
         <PortStatusLabel connection={connection} />
       </div>
 
-      {checking && (
+      {connection.portStatus === 'checking' && (
         <p className="text-xs text-slate-500">
           Falando com o roteador para abrir a porta {connection.port}… isso leva alguns
           segundos. O link de rede local já funciona.
         </p>
       )}
 
-      {connection.behindCarrierNat && (
+      {connection.portStatus === 'tunneling' && (
+        <p className="text-xs text-slate-500">
+          A porta não abriu no roteador, então estou montando uma ponte de internet por fora
+          dele… {connection.portMappingDetail} O link de rede local já funciona.
+        </p>
+      )}
+
+      {connection.portStatus === 'tunnel' && (
+        <p className="text-xs text-slate-500">
+          Sem mexer no roteador: o link de internet entra por uma ponte da Cloudflare. Voz e
+          tela continuam indo direto de máquina para máquina.
+        </p>
+      )}
+
+      {connection.behindCarrierNat && connection.portStatus !== 'tunnel' && (
         <p className="text-xs text-amber-300">
           Sua operadora usa CGNAT: o link de internet não vai funcionar nem abrindo a porta,
           porque seu IP é compartilhado com outros clientes. Use o link de rede local, ou peça
@@ -82,9 +95,9 @@ export function InviteBar({ connection }: { connection: ConnectionInfo }) {
 
       {connection.portStatus === 'closed' && !connection.behindCarrierNat && (
         <p className="text-xs text-amber-300">
-          Não consegui abrir a porta {connection.port} sozinho (UPnP desligado no roteador).
-          Pela internet só vai funcionar se você liberar a porta {connection.port} TCP no
-          roteador. O link de rede local funciona do mesmo jeito.
+          Não consegui abrir a porta {connection.port} sozinho, e a ponte de internet também
+          não subiu. {connection.portMappingDetail} Pela internet só vai funcionar liberando a
+          porta {connection.port} TCP no roteador. O link de rede local funciona do mesmo jeito.
         </p>
       )}
     </header>
@@ -143,11 +156,11 @@ function CodeChip({
 }
 
 function PortStatusLabel({ connection }: { connection: ConnectionInfo }) {
-  if (connection.portStatus === 'checking') {
+  if (connection.portStatus === 'checking' || connection.portStatus === 'tunneling') {
     return (
       <span className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
         <span className="h-3 w-3 animate-spin-slow rounded-full border border-slate-600 border-t-accent" />
-        verificando roteador…
+        {connection.portStatus === 'checking' ? 'verificando roteador…' : 'abrindo ponte…'}
       </span>
     );
   }
@@ -155,13 +168,15 @@ function PortStatusLabel({ connection }: { connection: ConnectionInfo }) {
   return (
     <span
       className={`ml-auto text-xs ${
-        connection.portStatus === 'mapped' ? 'text-speak' : 'text-amber-300'
+        connection.portStatus === 'closed' ? 'text-amber-300' : 'text-speak'
       }`}
       title={connection.portMappingDetail}
     >
       {connection.portStatus === 'mapped'
         ? `porta ${connection.port} aberta automaticamente`
-        : `porta ${connection.port} fechada`}
+        : connection.portStatus === 'tunnel'
+          ? 'entrando por ponte de internet'
+          : `porta ${connection.port} fechada`}
     </span>
   );
 }

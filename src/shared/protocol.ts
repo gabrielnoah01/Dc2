@@ -69,6 +69,18 @@ export interface StreamOwner {
 // Convidado -> Host
 // ---------------------------------------------------------------------------
 
+/**
+ * Combinados da sala, anunciados na entrada. O convidado precisa saber antes
+ * de abrir a primeira conexão: em malha ele fala com todo mundo, em estrela só
+ * com o host, e cifrar sem o outro lado saber abrir é o mesmo que emudecer.
+ */
+export interface RoomFeatures {
+  /** Cada convidado conecta direto com os outros; o host para de repassar áudio. */
+  mesh: boolean;
+  /** O host aprova cada entrada na mão. */
+  approval: boolean;
+}
+
 export type ClientMessage =
   | { type: 'join'; token: string; username: string; protocol?: number }
   | {
@@ -98,8 +110,15 @@ export type ServerMessage =
       screenSharerIds: string[];
       /** Ausente = host de versão antiga, que não sabe negociar versão. */
       protocol?: number;
+      /** O que esta sala faz. Ausente = host antigo: estrela, sem cifra. */
+      features?: RoomFeatures;
     }
   | { type: 'join:rejected'; reason: string }
+  /**
+   * O host exige aprovação manual e ainda não decidiu. Não é erro nem entrada:
+   * o convidado fica esperando de propósito, com a tela dizendo isso.
+   */
+  | { type: 'join:pending'; reason?: string }
   | { type: 'presence:update'; participants: Participant[] }
   | { type: 'chat:broadcast'; message: ChatMessage }
   /** Histórico enviado logo após a entrada, do mais antigo para o mais novo. */

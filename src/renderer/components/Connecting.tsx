@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Logo } from './Logo';
+import { useSession } from '../state/store';
 
 /**
  * Sobreposição enquanto o servidor sobe ou a conexão é feita.
@@ -16,6 +17,8 @@ export function Connecting({ mode }: { mode: 'create' | 'join' }) {
       : ['Procurando o host', 'Conferindo o convite', 'Entrando na sala'];
 
   const [step, setStep] = useState(0);
+  // Sala com aprovação manual: a espera deixa de ser técnica e vira humana.
+  const pending = useSession((s) => s.joinPending);
 
   useEffect(() => {
     // Avança sozinho: é indicação de progresso, não medição — travar no passo 1
@@ -65,6 +68,14 @@ export function Connecting({ mode }: { mode: 'create' | 'join' }) {
           </div>
         ))}
       </div>
+
+      {pending && (
+        <p className="max-w-xs animate-fade-up text-center text-[11px] leading-relaxed text-slate-500">
+          {pending}
+          <br />
+          Dá para fechar o app: nada se perde, é só entrar de novo.
+        </p>
+      )}
     </div>
   );
 }

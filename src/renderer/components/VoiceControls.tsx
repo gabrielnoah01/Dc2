@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { ScreenSource } from '@shared/ipc';
 import { ScreenPicker } from './ScreenPicker';
+import { NetworkHealth } from './NetworkHealth';
+import type { Participant } from '@shared/protocol';
+import type { NetHealth } from '../webrtc/netHealth';
 import { Icon } from './Icons';
 import type { SharePresetId } from '../webrtc/quality';
 
@@ -14,6 +17,9 @@ interface Props {
   participantCount: number;
   /** Quantas telas estão no ar — várias ao mesmo tempo é permitido. */
   sharerCount: number;
+  /** Termômetro da conexão: fica no rodapé, perto da contagem de gente. */
+  health: NetHealth;
+  participants: Participant[];
   listSources(): Promise<ScreenSource[]>;
   onStartShare(sourceId: string, preset: SharePresetId): Promise<void>;
   onStopShare(): void;
@@ -68,7 +74,11 @@ export function VoiceControls(props: Props) {
           </button>
         )}
 
-        <span className="ml-auto text-xs text-slate-500">
+        <div className="ml-auto flex items-center gap-1">
+          <NetworkHealth health={props.health} participants={props.participants} />
+        </div>
+
+        <span className="text-xs text-slate-500">
           {props.participantCount} conectado(s)
           {props.sharerCount > 0 && ` · ${props.sharerCount} tela(s) no ar`}
         </span>
