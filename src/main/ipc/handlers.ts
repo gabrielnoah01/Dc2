@@ -676,9 +676,23 @@ async function startGuestSession(
           // Host de versão antiga não manda a lista; tratar como vazia.
           for (const id of message.screenSharerIds ?? []) sharers.add(id);
           break;
-        case 'presence:update':
+        case 'presence:update': {
+          // Quem saiu não compartilha mais nada. Confiar só no
+          // `screenshare:stopped` deixava o conjunto crescendo com ids mortos
+          // ao longo de uma sessão longa — e cada um deles virava uma tela
+          // fantasma na grade de quem ficou.
+          const present = new Set(message.participants.map((person) => person.id));
+          let dropped = false;
+          for (const id of sharers) {
+            if (present.has(id)) continue;
+            sharers.delete(id);
+            dropped = true;
+          }
+
           broadcastToRenderer(IPC_EVENT.participants, message.participants);
+          if (dropped) broadcastToRenderer(IPC_EVENT.screenShare, [...sharers]);
           break;
+        }
         case 'chat:broadcast':
           broadcastToRenderer(IPC_EVENT.chat, message.message);
           notifyChat(message.message, accepted?.selfId ?? null);

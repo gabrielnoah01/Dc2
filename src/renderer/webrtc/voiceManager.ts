@@ -1,6 +1,7 @@
 import type { IncomingSignal } from '@shared/ipc';
 import type { StreamOwner } from '@shared/protocol';
 import type { AudioSettings } from '@shared/settings';
+import { NoiseSuppressionChain, browserSuppression } from './noiseSuppression';
 import { PeerLink } from './peerLink';
 import { VOICE_SENDER } from './quality';
 import { runtime } from './runtime';
@@ -59,6 +60,8 @@ export class VoiceManager {
   private rawStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private micGain: GainNode | null = null;
+  /** Segunda camada de supressão de ruído, entre o microfone e o ganho. */
+  private suppression: NoiseSuppressionChain | null = null;
   private micDestination: MediaStreamAudioDestinationNode | null = null;
   private outgoingStream: MediaStream | null = null;
 
@@ -104,7 +107,22 @@ export class VoiceManager {
       this.micSource = context.createMediaStreamSource(raw);
       this.micGain = context.createGain();
       this.micDestination = context.createMediaStreamDestination();
-      this.micSource.connect(this.micGain);
+
+      // microfone -> supressão -> ganho -> faixa que sai.
+      // Buscar e compilar o worklet leva um tempo, e sair da sala nesse meio
+      // fecha o contexto por baixo. Sem reconferir, o que vinha depois
+      // estourava e virava um "erro de microfone" que nunca existiu.
+      this.suppression = await NoiseSuppressionChain.create(context);
+      if (this.stopped) {
+        this.suppression.dispose();
+        this.suppression = null;
+        raw.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+      this.suppression.setLevel(this.settings.noiseSuppressionLevel);
+      this.micSource.connect(this.suppression.input);
+      this.suppression.output.connect(this.micGain);
+
       this.micGain.connect(this.micDestination);
       this.applyGain();
 
@@ -130,6 +148,10 @@ export class VoiceManager {
       this.ensurePolling();
       return true;
     } catch (error) {
+      // Sair da sala no meio da montagem fecha o contexto por baixo e faz o
+      // resto estourar. É o fim esperado, não um problema de microfone para
+      // mostrar na cara de quem já foi embora.
+      if (this.stopped) return false;
       this.options.onError(describeMicError(error));
       return false;
     }
@@ -171,10 +193,17 @@ export class VoiceManager {
     this.applyTransmitState();
     this.refreshVolumes();
 
+    // Mudar de nível é só remontar nós: não mexe na faixa que sai, então a
+    // pessoa pode experimentar os três no meio da conversa sem cortar a voz.
+    if (previous.noiseSuppressionLevel !== settings.noiseSuppressionLevel) {
+      this.suppression?.setLevel(settings.noiseSuppressionLevel);
+    }
+
     const deviceChanged =
       previous.inputDeviceId !== settings.inputDeviceId ||
       previous.echoCancellation !== settings.echoCancellation ||
-      previous.noiseSuppression !== settings.noiseSuppression ||
+      browserSuppression(previous.noiseSuppressionLevel) !==
+        browserSuppression(settings.noiseSuppressionLevel) ||
       previous.autoGainControl !== settings.autoGainControl;
 
     if (deviceChanged && this.rawStream) await this.switchInputDevice();
@@ -254,10 +283,12 @@ export class VoiceManager {
     this.monitors.clear();
 
     this.micSource?.disconnect();
+    this.suppression?.dispose();
     this.micGain?.disconnect();
     this.rawStream?.getTracks().forEach((track) => track.stop());
     this.rawStream = null;
     this.micSource = null;
+    this.suppression = null;
     this.micGain = null;
     this.micDestination = null;
     this.outgoingStream = null;
@@ -433,13 +464,12 @@ export class VoiceManager {
   // -------------------------------------------------------------------------
 
   private captureMicrophone(): Promise<MediaStream> {
-    const { inputDeviceId, echoCancellation, noiseSuppression, autoGainControl } =
-      this.settings;
+    const { inputDeviceId, echoCancellation, autoGainControl } = this.settings;
     return navigator.mediaDevices.getUserMedia({
       audio: {
         ...(inputDeviceId ? { deviceId: { exact: inputDeviceId } } : {}),
         echoCancellation,
-        noiseSuppression,
+        noiseSuppression: browserSuppression(this.settings.noiseSuppressionLevel),
         autoGainControl,
         sampleRate: 48_000,
         channelCount: 2,
@@ -461,7 +491,9 @@ export class VoiceManager {
 
       this.rawStream = raw;
       this.micSource = this.audioContext.createMediaStreamSource(raw);
-      this.micSource.connect(this.micGain);
+      // Volta para a entrada da cadeia, não direto no ganho: senão trocar de
+      // microfone desligava a supressão sem ninguém notar.
+      this.micSource.connect(this.suppression?.input ?? this.micGain);
     } catch (error) {
       this.options.onError(describeMicError(error));
     }

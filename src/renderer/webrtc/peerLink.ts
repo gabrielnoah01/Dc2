@@ -9,6 +9,17 @@ export interface PeerLinkEvents {
   onTrack(track: MediaStreamTrack, stream: MediaStream): void;
   /** A faixa acabou (o outro lado parou de compartilhar / saiu). */
   onTrackEnded(track: MediaStreamTrack, stream: MediaStream): void;
+  /**
+   * A faixa parou de receber mídia sem ter acabado formalmente.
+   *
+   * É o que acontece quando o host deixa de repassar a tela de alguém: o
+   * `removeTrack` do outro lado só desliga a direção do transceiver, e o
+   * Chromium marca a faixa como `muted` em vez de disparar `ended`. Quem
+   * escutava só `ended` ficava com o último quadro congelado na tela para
+   * sempre.
+   */
+  onTrackMuted?(track: MediaStreamTrack, stream: MediaStream): void;
+  onTrackUnmuted?(track: MediaStreamTrack, stream: MediaStream): void;
   onStateChange?(state: RTCPeerConnectionState): void;
 }
 
@@ -28,6 +39,27 @@ export class PeerLink {
   private ignoreOffer = false;
   private settingRemoteAnswer = false;
   private closed = false;
+
+  /**
+   * Qualidade pedida em cada faixa que sai daqui.
+   *
+   * Guardar não é luxo: `setParameters` aplicado antes da primeira negociação
+   * cai no vazio, porque o Chromium recria as `encodings` quando a descrição
+   * local é montada. Como `addTrack` e `tuneSender` acontecem juntos, era
+   * exatamente esse o caso — e a tela saía no bitrate conservador padrão até
+   * que alguma outra coisa (mais alguém entrando, alguém compartilhando)
+   * disparasse um `retuneSenders` e reaplicasse tudo. Daí a tela "consertar
+   * sozinha" quando outra pessoa abria a dela.
+   */
+  private readonly tuned = new Map<RTCRtpSender, SenderQuality>();
+  /**
+   * Uma fila por faixa. `setParameters` carrega o `transactionId` do
+   * `getParameters` que veio antes dele; dois ajustes sobrepostos fazem o
+   * segundo nascer com um bilhete velho e ser recusado. Sem a fila, o pedido
+   * perdido podia ser justamente o mais novo - a sala mudou de tamanho no meio
+   * de uma renegociação e a qualidade certa era a que sumia.
+   */
+  private readonly tuning = new Map<RTCRtpSender, Promise<void>>();
 
   constructor(
     readonly peerId: string,
@@ -66,10 +98,21 @@ export class PeerLink {
       // `mute`/`ended` cobrem tanto o fim explícito quanto a remoção da faixa.
       track.addEventListener('ended', () => this.events.onTrackEnded(track, stream));
       stream.addEventListener('removetrack', () => this.events.onTrackEnded(track, stream));
+      track.addEventListener('mute', () => this.events.onTrackMuted?.(track, stream));
+      track.addEventListener('unmute', () => this.events.onTrackUnmuted?.(track, stream));
     };
 
     this.pc.onconnectionstatechange = () => {
+      // Negociação fechada: agora as `encodings` existem de verdade e o que
+      // foi pedido antes da hora pode finalmente valer.
+      if (this.pc.connectionState === 'connected') this.reapplyTuning();
       this.events.onStateChange?.(this.pc.connectionState);
+    };
+
+    // A mesma reaplicação para quem renegocia sem trocar de estado de conexão
+    // (faixa adicionada numa conexão que já estava de pé).
+    this.pc.onsignalingstatechange = () => {
+      if (this.pc.signalingState === 'stable') this.reapplyTuning();
     };
   }
 
@@ -85,6 +128,34 @@ export class PeerLink {
    */
   async tuneSender(sender: RTCRtpSender, quality: SenderQuality): Promise<void> {
     if (this.closed) return;
+    this.tuned.set(sender, quality);
+    await this.queueTuning(sender, quality);
+  }
+
+  /** Enfileira o ajuste atrás do que já estiver em curso nesta faixa. */
+  private queueTuning(sender: RTCRtpSender, quality: SenderQuality): Promise<void> {
+    const next = (this.tuning.get(sender) ?? Promise.resolve()).then(() =>
+      this.applyTuning(sender, quality),
+    );
+
+    this.tuning.set(sender, next);
+    void next.finally(() => {
+      // Só limpa se ninguém entrou na fila depois, senão apagaria a corrente.
+      if (this.tuning.get(sender) === next) this.tuning.delete(sender);
+    });
+    return next;
+  }
+
+  /** Reaplica em todas as faixas o que já tinha sido pedido. */
+  private reapplyTuning(): void {
+    if (this.closed) return;
+    for (const [sender, quality] of this.tuned) {
+      void this.queueTuning(sender, quality);
+    }
+  }
+
+  private async applyTuning(sender: RTCRtpSender, quality: SenderQuality): Promise<void> {
+    if (this.closed) return;
     try {
       const parameters = sender.getParameters();
       // `encodings` pode vir vazio antes da primeira negociação.
@@ -94,6 +165,11 @@ export class PeerLink {
       for (const encoding of parameters.encodings) {
         encoding.maxBitrate = quality.maxBitrate;
         if (quality.maxFramerate) encoding.maxFramerate = quality.maxFramerate;
+        // Sem escala explícita o Chromium escolhe encolher a imagem na primeira
+        // dúvida e nunca mais volta a crescer: é o "borrado que não melhora".
+        if (quality.scaleResolutionDownBy) {
+          encoding.scaleResolutionDownBy = quality.scaleResolutionDownBy;
+        }
         encoding.priority = 'high';
         encoding.networkPriority = 'high';
       }
@@ -138,6 +214,8 @@ export class PeerLink {
   }
 
   removeSender(sender: RTCRtpSender): void {
+    this.tuned.delete(sender);
+    this.tuning.delete(sender);
     if (this.closed) return;
     try {
       this.pc.removeTrack(sender);
@@ -190,10 +268,13 @@ export class PeerLink {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.tuned.clear();
+    this.tuning.clear();
     this.pc.onnegotiationneeded = null;
     this.pc.onicecandidate = null;
     this.pc.ontrack = null;
     this.pc.onconnectionstatechange = null;
+    this.pc.onsignalingstatechange = null;
     this.pc.close();
   }
 

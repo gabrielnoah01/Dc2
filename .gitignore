@@ -7,3 +7,4 @@ release/
 # Preferências e conversas ficam em %APPDATA%, mas caso alguém aponte para cá:
 settings.json
 conversations/
+*.diff

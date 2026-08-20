@@ -23,7 +23,29 @@ export const runtime = {
    * conexão pergunta aqui em vez de decidir sozinho.
    */
   forceRelay: false,
+  /**
+   * Reduzir a própria transmissão quando a janela sai da frente. Desligado por
+   * padrão: quem minimiza o Only compartilhando costuma estar jogando em tela
+   * cheia, e é bem aí que a tela precisa estar boa para quem assiste.
+   */
+  throttleShareWhenHidden: false,
 };
+
+type RuntimeListener = () => void;
+
+const listeners = new Set<RuntimeListener>();
+
+/**
+ * Avisa quem já está com conexões de pé que as preferências mudaram.
+ *
+ * Um efeito de React não serve aqui: o `applyRuntimeSettings` mora no App, que
+ * é o pai, e efeito de pai roda *depois* do efeito do filho - quem reagisse lá
+ * embaixo leria o valor velho. Assinar daqui tira a ordem da jogada.
+ */
+export function onRuntimeChange(listener: RuntimeListener): () => void {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+}
 
 export function applyRuntimeSettings(settings: Settings): void {
   // Sem STUN, só candidatos locais: funciona na LAN e não contata ninguém.
@@ -33,6 +55,9 @@ export function applyRuntimeSettings(settings: Settings): void {
   runtime.forceRelay = settings.network.forceRelay;
   runtime.screenBitrate = Math.round(settings.screen.maxBitrateMbps * 1_000_000);
   runtime.showCursor = settings.screen.showCursor;
+  runtime.throttleShareWhenHidden = settings.screen.throttleWhenHidden;
+
+  for (const listener of listeners) listener();
 }
 
 /**

@@ -18,5 +18,12 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,
+    /**
+     * Arquivo pequeno o bastante vira `data:` embutido, e é exatamente o que
+     * não pode acontecer com o processador do AudioWorklet: o CSP do app é
+     * `default-src 'self'`, que não aceita script vindo de `data:`. Ele
+     * precisa sair como arquivo de verdade, servido pela própria origem.
+     */
+    assetsInlineLimit: (filePath) => (filePath.includes('.worklet.') ? false : undefined),
   },
 });

@@ -5,9 +5,18 @@ import {
   DEFAULT_PRESET,
   SHARE_PRESETS,
   forwardQuality,
+  throttledQuality,
   type SharePresetId,
+  type WindowActivity,
 } from './quality';
-import { runtime } from './runtime';
+import { onRuntimeChange, runtime } from './runtime';
+
+/**
+ * Quanto esperar antes de tratar uma faixa emudecida como acabada. Curto
+ * demais e um engasgo de rede tira a tela do ar; longo demais e a tela de quem
+ * saiu fica congelada na grade.
+ */
+const MUTE_GRACE_MS = 5_000;
 
 /** Uma tela recebida, já resolvida para o dono. */
 export interface RemoteScreen {
@@ -51,11 +60,16 @@ export class ScreenShareManager {
   private readonly received: ReceivedTrack[] = [];
   private readonly streamOwner = new Map<string, string>();
 
+  /** Faixas que emudeceram e estão no prazo antes de contar como acabadas. */
+  private readonly muteTimers = new Map<string, number>();
+
   private localStream: MediaStream | null = null;
   /** Modo escolhido para a transmissão local (fluidez ou nitidez). */
   private preset = SHARE_PRESETS[DEFAULT_PRESET];
   /** Agrupa as atualizações do mapa de donos num envio só. */
   private streamMapTimer: number | null = null;
+  /** Estado da janela, para aliviar o encoder quando ninguém está olhando. */
+  private activity: WindowActivity = 'active';
 
   /**
    * Preset escolhido, com o teto das configurações e uma redução conforme o
@@ -72,10 +86,37 @@ export class ScreenShareManager {
     const scale = recipients <= 1 ? 1 : Math.max(0.35, 1 / Math.sqrt(recipients));
     const ceiling = Math.min(this.preset.sender.maxBitrate, runtime.screenBitrate);
 
-    return {
+    const quality = {
       ...this.preset.sender,
       maxBitrate: Math.round(ceiling * scale),
     };
+
+    // Só entra no caminho quando a pessoa pediu: por padrão a janela em segundo
+    // plano não muda nada do que os outros recebem.
+    return runtime.throttleShareWhenHidden
+      ? throttledQuality(quality, this.activity)
+      : quality;
+  }
+
+  /**
+   * A janela mudou de estado. Reaplicar a qualidade é barato (é só
+   * `setParameters`) e não renegocia nada, então pode acompanhar de perto.
+   */
+  setActivity(activity: WindowActivity): void {
+    if (this.activity === activity) return;
+    this.activity = activity;
+    this.retuneSenders();
+  }
+
+  /**
+   * As preferências de tela mudaram: o teto de banda, o modo, ou a própria
+   * redução de segundo plano. Sem isto, desligar a redução com a janela
+   * minimizada deixava o envio preso em um quarto do bitrate até que alguém
+   * entrasse ou saísse da sala.
+   */
+  private applyPreferences(): void {
+    if (this.stopped) return;
+    this.retuneSenders();
   }
 
   /** Reaplica a qualidade quando a sala muda de tamanho. */
@@ -94,6 +135,9 @@ export class ScreenShareManager {
   }
   private stopped = false;
 
+  /** Solto quando o gerente morre; sem isto o ouvinte vazaria por sessão. */
+  private readonly offRuntimeChange = onRuntimeChange(() => this.applyPreferences());
+
   constructor(private readonly options: ScreenShareOptions) {}
 
   get isSharing(): boolean {
@@ -109,6 +153,11 @@ export class ScreenShareManager {
     if (this.stopped) return;
     const previousSize = this.links.size;
     const wanted = new Set(this.wantedPeers(peerIds));
+
+    // Quem saiu da sala não pode continuar dono de tela nenhuma. Em estrela o
+    // mapa vem do host, e um `screenshare:stopped` perdido no meio de uma saída
+    // deixava o dono registrado para sempre — era a tela que ficava lá parada.
+    this.pruneOwners(peerIds);
 
     for (const peerId of wanted) {
       if (!this.links.has(peerId)) this.openLink(peerId);
@@ -210,8 +259,11 @@ export class ScreenShareManager {
 
   dispose(): void {
     this.stopped = true;
+    this.offRuntimeChange();
     if (this.streamMapTimer !== null) window.clearTimeout(this.streamMapTimer);
     this.streamMapTimer = null;
+    for (const timer of this.muteTimers.values()) window.clearTimeout(timer);
+    this.muteTimers.clear();
     this.stopSharing();
     for (const link of this.links.values()) link.close();
     this.links.clear();
@@ -248,6 +300,8 @@ export class ScreenShareManager {
     const link = new PeerLink(peerId, 'screen', this.politeWith(peerId), {
       onTrack: (track, stream) => this.handleRemoteTrack(peerId, track, stream),
       onTrackEnded: (track) => this.handleTrackEnded(peerId, track),
+      onTrackMuted: (track) => this.handleTrackMuted(peerId, track),
+      onTrackUnmuted: (track, stream) => this.handleTrackUnmuted(peerId, track, stream),
     });
     this.links.set(peerId, link);
     this.forwarded.set(peerId, new Map());
@@ -312,6 +366,8 @@ export class ScreenShareManager {
   }
 
   private handleTrackEnded(peerId: string, track: MediaStreamTrack): void {
+    this.cancelMuteTimer(track);
+
     const entry = this.received.find(
       (item) => item.from === peerId && item.track.id === track.id,
     );
@@ -323,6 +379,64 @@ export class ScreenShareManager {
 
     if (this.options.isHost) this.broadcastStreamMap();
     this.emitScreens();
+  }
+
+  /**
+   * Faixa emudecida: pode ser um engasgo de rede (volta sozinha em segundos) ou
+   * a tela tendo acabado sem `ended`. Esperar o prazo distingue os dois casos
+   * sem tirar da tela quem só teve uma oscilação.
+   */
+  private handleTrackMuted(peerId: string, track: MediaStreamTrack): void {
+    if (this.stopped || this.muteTimers.has(track.id)) return;
+
+    const timer = window.setTimeout(() => {
+      this.muteTimers.delete(track.id);
+      // Voltou a receber no meio do caminho: não era o fim.
+      if (this.stopped || !track.muted) return;
+      this.handleTrackEnded(peerId, track);
+    }, MUTE_GRACE_MS);
+
+    this.muteTimers.set(track.id, timer);
+  }
+
+  /**
+   * A faixa voltou a receber. Se o prazo já tinha vencido, ela foi tratada
+   * como acabada e saiu de tudo — do mapa de donos ao repasse. Cancelar o
+   * timer não desfaz nada disso, então ela precisa entrar de novo pela porta
+   * da frente; senão um engasgo de mais de cinco segundos derruba a tela para
+   * sempre — e, no host, para todo mundo junto.
+   */
+  private handleTrackUnmuted(
+    peerId: string,
+    track: MediaStreamTrack,
+    stream: MediaStream,
+  ): void {
+    if (this.stopped) return;
+    this.cancelMuteTimer(track);
+
+    const known = this.received.some((item) => item.track.id === track.id);
+    if (known || track.readyState === 'ended') return;
+
+    this.handleRemoteTrack(peerId, track, stream);
+  }
+
+  private cancelMuteTimer(track: MediaStreamTrack): void {
+    const timer = this.muteTimers.get(track.id);
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    this.muteTimers.delete(track.id);
+  }
+
+  /** Tira do mapa de donos quem não está mais na sala. */
+  private pruneOwners(peerIds: string[]): void {
+    const present = new Set([...peerIds, this.options.selfId]);
+    let changed = false;
+    for (const [streamId, ownerId] of this.streamOwner) {
+      if (present.has(ownerId)) continue;
+      this.streamOwner.delete(streamId);
+      changed = true;
+    }
+    if (changed) this.emitScreens();
   }
 
   private forward(

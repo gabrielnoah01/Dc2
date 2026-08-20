@@ -138,6 +138,7 @@ export const IPC_EVENT = {
   shortcut: 'event:shortcut',
   joinRequests: 'event:join-requests',
   joinPending: 'event:join-pending',
+  windowActivity: 'event:window-activity',
 } as const;
 
 /**
@@ -248,6 +249,8 @@ export interface OnlyApi {
   onUpdate(handler: (status: UpdateStatus) => void): () => void;
   onSettings(handler: (settings: Settings) => void): () => void;
   onShortcut(handler: (action: ShortcutAction) => void): () => void;
+  /** Estado da janela, para o renderer parar de trabalhar quando ninguém olha. */
+  onWindowActivity(handler: (activity: WindowActivityState) => void): () => void;
   /** Só o host recebe: quem está esperando aprovação neste instante. */
   onJoinRequests(handler: (requests: JoinRequest[]) => void): () => void;
   /** Só o convidado recebe: o host precisa aprovar, aguarde. */
@@ -279,6 +282,16 @@ export interface ConversationSummary {
 
 /** Ações disparadas pelos atalhos globais. */
 export type ShortcutAction = 'toggle-mute' | 'toggle-deafen' | 'ptt-down' | 'ptt-up';
+
+/**
+ * O quanto a janela está sendo olhada.
+ *
+ * Vem do processo principal em vez de `document.visibilityState` porque o
+ * renderer não distingue os casos que importam: minimizada, escondida na
+ * bandeja e "aberta atrás de outra janela" chegam todas como a mesma coisa, e
+ * a economia que vale a pena fazer em cada uma é diferente.
+ */
+export type WindowActivityState = 'active' | 'background' | 'hidden';
 
 export type SettingsPatch = {
   [K in keyof Settings]?: Partial<Settings[K]>;

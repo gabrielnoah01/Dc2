@@ -5,6 +5,20 @@ import { IceServerEditor } from '../components/IceServerEditor';
 import { APP_NAME, MAX_USERNAME_LENGTH } from '@shared/constants';
 import type { ConversationSummary } from '@shared/ipc';
 import { RetentionPicker } from '../components/RetentionPicker';
+import { NOISE_PROFILES } from '../webrtc/noiseSuppression';
+import type { NoiseSuppressionLevel } from '@shared/settings';
+
+/**
+ * O que cada degrau faz, em uma linha. Supressão é o ajuste que mais gera
+ * "minha voz ficou estranha", e a saída quase sempre é descer um nível — dizer
+ * isso na própria dica evita a viagem até o suporte.
+ */
+const NOISE_LEVEL_HINTS: Record<NoiseSuppressionLevel, string> = {
+  off: 'Nada é filtrado. Só para microfone com tratamento próprio',
+  light: `${NOISE_PROFILES.light.description} Use se a sua voz sumir nos outros níveis`,
+  medium: `${NOISE_PROFILES.medium.description} É o equilíbrio para a maioria`,
+  max: `${NOISE_PROFILES.max.description} Desça um nível se comer o começo das frases`,
+};
 
 type Tab = 'audio' | 'chat' | 'shortcuts' | 'screen' | 'people' | 'network' | 'app';
 
@@ -204,10 +218,24 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
               onChange={(echoCancellation) => void save({ audio: { echoCancellation } })}
             />
           </Row>
-          <Row label="Supressão de ruído" hint="Corta ventilador, teclado, ar-condicionado">
-            <Toggle
-              value={audio.noiseSuppression}
-              onChange={(noiseSuppression) => void save({ audio: { noiseSuppression } })}
+          <Row
+            label="Supressão de ruído"
+            hint={
+              NOISE_LEVEL_HINTS[audio.noiseSuppressionLevel] ??
+              'Corta ventilador, teclado, ar-condicionado'
+            }
+          >
+            <Select
+              value={audio.noiseSuppressionLevel}
+              onChange={(noiseSuppressionLevel) =>
+                void save({ audio: { noiseSuppressionLevel } })
+              }
+              options={[
+                { value: 'off', label: 'Desligada' },
+                { value: 'light', label: 'Leve' },
+                { value: 'medium', label: 'Média' },
+                { value: 'max', label: 'Máxima' },
+              ]}
             />
           </Row>
           <Row label="Ganho automático" hint="Nivela o volume da sua voz sozinho">
@@ -397,7 +425,7 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
             value={screen.defaultPreset}
             onChange={(defaultPreset) => void save({ screen: { defaultPreset } })}
             options={[
-              { value: 'fluid', label: 'Fluidez — 720p a 120 fps' },
+              { value: 'fluid', label: 'Fluidez — 1080p a 60 fps' },
               { value: 'sharp', label: 'Nitidez — 1440p a 60 fps' },
             ]}
           />
@@ -415,6 +443,24 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           <Toggle
             value={screen.showCursor}
             onChange={(showCursor) => void save({ screen: { showCursor } })}
+          />
+        </Row>
+        <Row
+          label="Pausar as telas com a janela minimizada"
+          hint="Para de decodificar o que ninguém está vendo. É a maior economia de CPU do app"
+        >
+          <Toggle
+            value={screen.pauseVideoWhenHidden}
+            onChange={(pauseVideoWhenHidden) => void save({ screen: { pauseVideoWhenHidden } })}
+          />
+        </Row>
+        <Row
+          label="Reduzir a minha transmissão em segundo plano"
+          hint="Devolve CPU para o jogo, ao custo de piorar a sua tela para quem assiste"
+        >
+          <Toggle
+            value={screen.throttleWhenHidden}
+            onChange={(throttleWhenHidden) => void save({ screen: { throttleWhenHidden } })}
           />
         </Row>
       </Section>

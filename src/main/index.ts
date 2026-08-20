@@ -46,8 +46,15 @@ function notifyRenderer(detail: string): void {
  * na bandeja cria um segundo processo que também não aparece — e o usuário
  * acumula cópias invisíveis rodando de fundo.
  */
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
+const primary = app.requestSingleInstanceLock();
+
+if (!primary) {
+  // `quit()` é assíncrono e o resto do arquivo continuava correndo: a segunda
+  // abertura chegava a montar janela, bandeja e atalhos globais antes de
+  // morrer — roubando o atalho de mudo de quem já estava de pé, e piscando
+  // uma janela vazia. `exit` corta na hora, antes do `whenReady`.
+  logToFile('boot', 'já existe uma instância — saindo');
+  app.exit(0);
 }
 
 app.on('second-instance', () => {
@@ -57,6 +64,10 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  // Cinto e suspensório: se o `exit` acima não tiver alcançado o processo,
+  // ninguém aqui pode subir uma segunda cópia do app.
+  if (!primary) return;
+
   logToFile('boot', `iniciando — empacotado: ${app.isPackaged}`);
 
   const settings = loadSettings();

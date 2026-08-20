@@ -7,6 +7,7 @@ import { ScreenShareManager, type RemoteScreen } from './screenShareManager';
 import type { SharePresetId } from './quality';
 import { EMPTY_HEALTH, NetHealthProbe, SAMPLE_INTERVAL_MS, type NetHealth } from './netHealth';
 import { useSettings } from '../state/settings';
+import { useWindowActivity } from '../state/windowActivity';
 
 interface SessionInfo {
   role: Role;
@@ -42,6 +43,7 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
   const screenRef = useRef<ScreenShareManager | null>(null);
 
   const settings = useSettings((s) => s.settings);
+  const activity = useWindowActivity();
   const [micReady, setMicReady] = useState(false);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
@@ -138,6 +140,13 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
     screenRef.current?.syncPeers(ids);
   }, [participants]);
 
+  // A janela saiu (ou voltou) da frente: reajusta o que o encoder gasta.
+  // `selfId` entra nas dependências porque uma sessão nova traz um gerente
+  // novo, que nasce achando que a janela está na frente.
+  useEffect(() => {
+    screenRef.current?.setActivity(activity);
+  }, [activity, selfId]);
+
   // Preferências mudaram: dispositivo, ganho, volumes, modo de voz.
   useEffect(() => {
     void voiceRef.current?.applySettings(settings.audio);
@@ -201,6 +210,8 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
     if (ok) await window.only.setScreenShare(true);
   }, []);
 
+  const hidden = activity === 'hidden';
+
   // Medição de rede: uma amostra a cada poucos segundos, só enquanto a sessão
   // existe. `getStats()` é barato, mas não de graça — daí o intervalo largo.
   useEffect(() => {
@@ -218,13 +229,21 @@ export function useMediaSession({ role, selfId, participants }: SessionInfo): Me
       if (!cancelled) setHealth(next);
     }
 
-    const timer = window.setInterval(() => void tick(), SAMPLE_INTERVAL_MS);
+    // Minimizado ninguém lê o indicador de rede, e `getStats()` percorre todas
+    // as conexões a cada amostra. Voltar a medir custa uma amostra de atraso.
+    const timer = hidden
+      ? null
+      : window.setInterval(() => void tick(), SAMPLE_INTERVAL_MS);
+
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearInterval(timer);
       setHealth(EMPTY_HEALTH);
     };
-  }, [selfId]);
+    // Só `hidden` entra nas dependências, e não `activity` inteiro: trocar de
+    // janela (`active` <-> `background`) é constante para quem compartilha
+    // jogo, e remontar aqui apagava o indicador a cada alt-tab.
+  }, [selfId, hidden]);
 
   const stopShare = useCallback(() => {
     screenRef.current?.stopSharing();

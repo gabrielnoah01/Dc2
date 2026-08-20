@@ -49,6 +49,7 @@ const api: OnlyApi = {
   onJoinPending: (handler) => subscribe(IPC_EVENT.joinPending, handler),
   onSettings: (handler) => subscribe(IPC_EVENT.settings, handler),
   onShortcut: (handler) => subscribe(IPC_EVENT.shortcut, handler),
+  onWindowActivity: (handler) => subscribe(IPC_EVENT.windowActivity, handler),
   onConnection: (handler) => subscribe(IPC_EVENT.connection, handler),
 };
 

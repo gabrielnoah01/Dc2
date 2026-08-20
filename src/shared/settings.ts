@@ -14,6 +14,17 @@ export type SharePresetId = 'fluid' | 'sharp';
 /** Como o microfone decide quando transmitir. */
 export type VoiceMode = 'open' | 'ptt';
 
+/**
+ * Força da supressão de ruído, em camadas.
+ *
+ * Supressão é sempre uma troca: o que corta ventilador e teclado também come o
+ * começo das palavras e a respiração que faz a voz soar humana. Por isso são
+ * níveis e não um interruptor — quem tem sala silenciosa fica no leve, quem
+ * mora em rua movimentada sobe até o máximo, e quem achar que ficou robótico
+ * desce um degrau.
+ */
+export type NoiseSuppressionLevel = 'off' | 'light' | 'medium' | 'max';
+
 export interface AudioSettings {
   /** `deviceId` do microfone; vazio = o padrão do sistema. */
   inputDeviceId: string;
@@ -24,7 +35,8 @@ export interface AudioSettings {
   /** Volume geral de quem você ouve, 0–200 (%). */
   outputVolume: number;
   echoCancellation: boolean;
-  noiseSuppression: boolean;
+  /** Força da supressão de ruído do microfone. */
+  noiseSuppressionLevel: NoiseSuppressionLevel;
   autoGainControl: boolean;
   voiceMode: VoiceMode;
   /** Acima de quanto conta como "falando", 0–100. */
@@ -48,6 +60,21 @@ export interface ScreenSettings {
   maxBitrateMbps: number;
   /** Inclui o cursor do mouse na captura. */
   showCursor: boolean;
+  /**
+   * Com a janela minimizada, para de decodificar e pintar as telas recebidas.
+   * É de longe a maior economia de CPU/GPU do app, e não custa nada: ninguém
+   * está olhando. A voz continua intacta.
+   */
+  pauseVideoWhenHidden: boolean;
+  /**
+   * Além de parar de receber, também derrubar a qualidade do que *você* envia
+   * enquanto a janela está fora da frente.
+   *
+   * Desligado por padrão: minimizar compartilhando costuma ser jogo em tela
+   * cheia, e é justamente aí que a tela precisa estar boa do outro lado. Ligue
+   * se preferir devolver esse trabalho de encoder para os seus FPS.
+   */
+  throttleWhenHidden: boolean;
 }
 
 export interface NotificationSettings {
@@ -234,7 +261,7 @@ export const DEFAULT_SETTINGS: Settings = {
     inputVolume: 100,
     outputVolume: 100,
     echoCancellation: true,
-    noiseSuppression: true,
+    noiseSuppressionLevel: 'medium',
     autoGainControl: true,
     voiceMode: 'open',
     speakingSensitivity: 5,
@@ -256,8 +283,12 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   screen: {
     defaultPreset: 'fluid',
-    maxBitrateMbps: 6,
+    // 1080p60 nítido não cabe em 6 Mbps; com teto baixo o encoder devolve a
+    // diferença em borrão, que era metade da queixa de qualidade.
+    maxBitrateMbps: 10,
     showCursor: true,
+    pauseVideoWhenHidden: true,
+    throttleWhenHidden: false,
   },
   notifications: {
     soundOnJoin: true,
@@ -299,10 +330,10 @@ export const DEFAULT_SETTINGS: Settings = {
 export function mergeSettings(stored: unknown): Settings {
   const source = (stored ?? {}) as Partial<Settings>;
   return {
-    audio: { ...DEFAULT_SETTINGS.audio, ...(source.audio ?? {}) },
+    audio: migrateAudio(source.audio),
     chat: { ...DEFAULT_SETTINGS.chat, ...(source.chat ?? {}) },
     shortcuts: { ...DEFAULT_SETTINGS.shortcuts, ...(source.shortcuts ?? {}) },
-    screen: { ...DEFAULT_SETTINGS.screen, ...(source.screen ?? {}) },
+    screen: migrateScreen(source.screen),
     notifications: { ...DEFAULT_SETTINGS.notifications, ...(source.notifications ?? {}) },
     network: {
       ...DEFAULT_SETTINGS.network,
@@ -314,6 +345,31 @@ export function mergeSettings(stored: unknown): Settings {
     app: { ...DEFAULT_SETTINGS.app, ...(source.app ?? {}) },
     peers: { ...(source.peers ?? {}) },
   };
+}
+
+/**
+ * Preferências de áudio de versões antigas continuam válidas: o antigo
+ * interruptor `noiseSuppression` vira o nível equivalente.
+ */
+/** Os únicos valores que o resto do código sabe tratar. */
+const NOISE_LEVELS: readonly NoiseSuppressionLevel[] = ['off', 'light', 'medium', 'max'];
+
+function migrateAudio(stored: Partial<AudioSettings> | undefined): AudioSettings {
+  const source = (stored ?? {}) as Partial<AudioSettings> & { noiseSuppression?: boolean };
+  const audio: AudioSettings = { ...DEFAULT_SETTINGS.audio, ...source };
+
+  if (source.noiseSuppressionLevel === undefined && typeof source.noiseSuppression === 'boolean') {
+    audio.noiseSuppressionLevel = source.noiseSuppression ? 'medium' : 'off';
+  }
+  delete (audio as { noiseSuppression?: boolean }).noiseSuppression;
+
+  // O arquivo é editável na mão, e um nível que não existe não é um detalhe:
+  // `NOISE_PROFILES[nível]` sairia `undefined` e o microfone inteiro parava
+  // de abrir, reportado como um erro genérico de captura.
+  if (!NOISE_LEVELS.includes(audio.noiseSuppressionLevel)) {
+    audio.noiseSuppressionLevel = DEFAULT_SETTINGS.audio.noiseSuppressionLevel;
+  }
+  return audio;
 }
 
 /**
@@ -366,6 +422,24 @@ export function buildIceServers(network: NetworkSettings, fallback: IceServerSet
   }
 
   return list;
+}
+
+/**
+ * O teto de banda subiu junto com o preset padrão (6 -> 10 Mbps): 1080p60 não
+ * cabe em 6 Mbps, e o teto é aplicado por cima do preset. Quem já tinha o app
+ * instalado carrega o 6 salvo em disco e receberia a resolução nova espremida
+ * no limite velho - exatamente o borrão que essa mudança veio consertar. Só o
+ * valor que era o padrão antigo sobe; quem escolheu outro número escolheu.
+ */
+const OLD_DEFAULT_SCREEN_MBPS = 6;
+
+function migrateScreen(stored: Partial<ScreenSettings> | undefined): ScreenSettings {
+  const screen: ScreenSettings = { ...DEFAULT_SETTINGS.screen, ...(stored ?? {}) };
+
+  if (screen.maxBitrateMbps === OLD_DEFAULT_SCREEN_MBPS) {
+    screen.maxBitrateMbps = DEFAULT_SETTINGS.screen.maxBitrateMbps;
+  }
+  return screen;
 }
 
 /** Ajustes de uma pessoa, já com os padrões aplicados. */

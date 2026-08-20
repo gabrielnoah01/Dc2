@@ -50,6 +50,12 @@ export function ServerScreen() {
     // para a grade não piscar quando alguém começa a compartilhar.
     for (const ownerId of screenSharerIds ?? []) {
       if (list.some((tile) => tile.ownerId === ownerId)) continue;
+      // ...mas só se a pessoa ainda estiver na sala. O aviso de "parou de
+      // compartilhar" e o de "saiu" são duas mensagens independentes, e quando
+      // a segunda chegava sem a primeira sobrava um retângulo carregando para
+      // sempre, de alguém que já tinha ido embora. A lista de participantes é a
+      // verdade; o anúncio de tela é só um complemento dela.
+      if (ownerId !== selfId && !participants.some((person) => person.id === ownerId)) continue;
       list.push({
         ownerId,
         label: ownerId === selfId ? 'Você' : participantName(participants, ownerId),
