@@ -1,6 +1,6 @@
 {
   "name": "only",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Chat, voz e compartilhamento de tela P2P — sem servidor central",
   "main": "dist/main/index.js",
   "author": "gabrielnoah",
